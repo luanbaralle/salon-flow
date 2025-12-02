@@ -278,12 +278,11 @@ export default function Landing() {
           >
             <div className="relative rounded-2xl border bg-card p-2 shadow-2xl">
               <div className="aspect-[16/9] rounded-xl bg-gradient-to-br from-primary/5 to-accent/5 overflow-hidden">
-                <div className="h-full w-full bg-muted/50 flex items-center justify-center">
-                  <div className="text-center">
-                    <Calendar className="h-16 w-16 text-primary mx-auto mb-4" />
-                    <p className="text-muted-foreground">Preview do Dashboard</p>
-                  </div>
-                </div>
+                <img 
+                  src="/dashboard-preview.png.png" 
+                  alt="Preview do Dashboard - Studio Bella"
+                  className="h-full w-full object-cover"
+                />
               </div>
               {/* Floating elements */}
               <div className="absolute -left-6 top-1/4 animate-float">
@@ -553,7 +552,7 @@ export default function Landing() {
                   <Button
                     size="xl"
                     variant="outline"
-                    className="w-full sm:w-auto border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
+                    className="w-full sm:w-auto bg-white text-foreground border-border hover:bg-transparent hover:text-white rounded-lg transition-all duration-200"
                   >
                     Falar com vendas
                   </Button>
