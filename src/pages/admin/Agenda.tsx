@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdminHeader } from '@/components/layout/AdminHeader';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -29,7 +29,7 @@ import { professionalsService } from '@/services/professionals.service';
 import { servicesService } from '@/services/services.service';
 import { clientsService } from '@/services/clients.service';
 import { reviewsService } from '@/services/reviews.service';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid } from 'lucide-react';
 import { format, addDays, startOfWeek, addWeeks, subWeeks, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -53,10 +53,13 @@ export default function AdminAgenda() {
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedProfessional, setSelectedProfessional] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('today');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
   const [hasReview, setHasReview] = useState(false);
+  const [showListView, setShowListView] = useState(true);
   const [formData, setFormData] = useState({
     client_id: '',
     professional_id: '',
@@ -247,6 +250,54 @@ export default function AdminAgenda() {
     }
   };
 
+  // Filtrar agendamentos para a lista
+  const filteredAppointments = useMemo(() => {
+    let filtered = [...appointments];
+
+    // Filtrar por profissional
+    if (selectedProfessional !== 'all') {
+      filtered = filtered.filter(a => a.professional_id === selectedProfessional);
+    }
+
+    // Filtrar por status
+    if (selectedStatus !== 'all') {
+      filtered = filtered.filter(a => a.status === selectedStatus);
+    }
+
+    // Filtrar por data
+    const today = format(new Date(), 'yyyy-MM-dd');
+    if (selectedDateFilter === 'today') {
+      filtered = filtered.filter(a => {
+        const aptDate = typeof a.date === 'string' ? a.date.split('T')[0] : format(new Date(a.date), 'yyyy-MM-dd');
+        return aptDate === today;
+      });
+    } else if (selectedDateFilter === 'week') {
+      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const weekEnd = addDays(weekStart, 6);
+      filtered = filtered.filter(a => {
+        const aptDate = typeof a.date === 'string' ? a.date.split('T')[0] : format(new Date(a.date), 'yyyy-MM-dd');
+        return aptDate >= format(weekStart, 'yyyy-MM-dd') && aptDate <= format(weekEnd, 'yyyy-MM-dd');
+      });
+    } else if (selectedDateFilter === 'month') {
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const monthEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+      filtered = filtered.filter(a => {
+        const aptDate = typeof a.date === 'string' ? a.date.split('T')[0] : format(new Date(a.date), 'yyyy-MM-dd');
+        return aptDate >= format(monthStart, 'yyyy-MM-dd') && aptDate <= format(monthEnd, 'yyyy-MM-dd');
+      });
+    }
+
+    // Ordenar por data e horário
+    return filtered.sort((a, b) => {
+      const dateA = typeof a.date === 'string' ? a.date : format(new Date(a.date), 'yyyy-MM-dd');
+      const dateB = typeof b.date === 'string' ? b.date : format(new Date(b.date), 'yyyy-MM-dd');
+      if (dateA !== dateB) {
+        return dateA.localeCompare(dateB);
+      }
+      return a.start_time.localeCompare(b.start_time);
+    });
+  }, [appointments, selectedProfessional, selectedStatus, selectedDateFilter]);
+
   const handlePrevious = () => {
     if (viewMode === 'week') {
       setCurrentDate(subWeeks(currentDate, 1));
@@ -426,6 +477,15 @@ export default function AdminAgenda() {
               </SelectContent>
             </Select>
 
+            <Button 
+              variant={showListView ? "default" : "outline"} 
+              size="icon"
+              onClick={() => setShowListView(!showListView)}
+              title={showListView ? "Mostrar calendário" : "Mostrar lista"}
+            >
+              {showListView ? <Grid className="h-4 w-4" /> : <List className="h-4 w-4" />}
+            </Button>
+
             <Button variant="gradient" onClick={() => setIsModalOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Novo Agendamento
@@ -433,7 +493,154 @@ export default function AdminAgenda() {
           </div>
         </div>
 
+        {/* Lista de Agendamentos */}
+        {showListView && (
+          <Card>
+            <CardContent className="p-0">
+              <div className="p-4 border-b space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Lista de Agendamentos</h3>
+                  <div className="flex items-center gap-2">
+                    <Select value={selectedDateFilter} onValueChange={setSelectedDateFilter}>
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas as datas</SelectItem>
+                        <SelectItem value="today">Hoje</SelectItem>
+                        <SelectItem value="week">Esta semana</SelectItem>
+                        <SelectItem value="month">Este mês</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos os status</SelectItem>
+                        <SelectItem value="pending">Pendente</SelectItem>
+                        <SelectItem value="confirmed">Confirmado</SelectItem>
+                        <SelectItem value="completed">Concluído</SelectItem>
+                        <SelectItem value="cancelled">Cancelado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              <div className="p-4">
+                {filteredAppointments.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>Nenhum agendamento encontrado</p>
+                    <p className="text-sm mt-2">Ajuste os filtros ou crie um novo agendamento</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredAppointments.map((appointment) => {
+                      const client = clients.find(c => c.id === appointment.client_id);
+                      const service = services.find(s => s.id === appointment.service_id);
+                      const professional = professionals.find(p => p.id === appointment.professional_id);
+                      const aptDate = typeof appointment.date === 'string' 
+                        ? appointment.date.split('T')[0] 
+                        : format(new Date(appointment.date), 'yyyy-MM-dd');
+                      const isToday = aptDate === format(new Date(), 'yyyy-MM-dd');
+                      
+                      return (
+                        <div
+                          key={appointment.id}
+                          className={cn(
+                            "flex items-center gap-4 p-4 rounded-lg border transition-all hover:shadow-md cursor-pointer",
+                            !appointment.read && "bg-primary-light/20 border-primary/30",
+                            appointment.status === 'cancelled' && "opacity-60"
+                          )}
+                          onClick={() => handleEdit(appointment)}
+                        >
+                          <div className="flex items-center justify-center w-16 text-center shrink-0">
+                            <div className="text-center">
+                              <p className={cn(
+                                "text-sm font-semibold",
+                                isToday && "text-primary"
+                              )}>
+                                {appointment.start_time.substring(0, 5)}
+                              </p>
+                              {isToday && (
+                                <p className="text-xs text-primary">Hoje</p>
+                              )}
+                              {!isToday && (
+                                <p className="text-xs text-muted-foreground">
+                                  {format(new Date(aptDate), "d 'de' MMM", { locale: ptBR })}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className={cn(
+                            "h-12 w-1 rounded-full shrink-0",
+                            appointment.status === 'confirmed' && "bg-success",
+                            appointment.status === 'pending' && "bg-warning",
+                            appointment.status === 'completed' && "bg-info",
+                            appointment.status === 'cancelled' && "bg-destructive"
+                          )} />
+                          <Avatar className="h-12 w-12 shrink-0">
+                            <AvatarImage src={professional?.avatar} />
+                            <AvatarFallback className="bg-primary-light text-primary">
+                              {professional?.name?.charAt(0) || 'P'}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="font-semibold truncate">{client?.name || 'Cliente'}</p>
+                              <Badge 
+                                variant={
+                                  appointment.status === 'confirmed' ? 'soft-success' : 
+                                  appointment.status === 'pending' ? 'soft-warning' : 
+                                  appointment.status === 'completed' ? 'soft-info' : 
+                                  'destructive'
+                                }
+                                className="text-xs"
+                              >
+                                {getStatusLabel(appointment.status)}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
+                              <Scissors className="h-3 w-3" />
+                              {service?.name || 'Serviço'}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                              <User className="h-3 w-3" />
+                              {professional?.name || 'Profissional'}
+                              <span className="mx-1">•</span>
+                              <Clock className="h-3 w-3" />
+                              {appointment.start_time.substring(0, 5)} - {appointment.end_time.substring(0, 5)}
+                              {appointment.price && (
+                                <>
+                                  <span className="mx-1">•</span>
+                                  R$ {appointment.price.toFixed(2)}
+                                </>
+                              )}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(appointment);
+                            }}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Calendar Grid */}
+        {!showListView && (
         <Card>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
@@ -524,27 +731,30 @@ export default function AdminAgenda() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-4">
-          <span className="text-sm text-muted-foreground">Legenda:</span>
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-success" />
-            <span className="text-sm">Confirmado</span>
+        {!showListView && (
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-sm text-muted-foreground">Legenda:</span>
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-success" />
+              <span className="text-sm">Confirmado</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-warning" />
+              <span className="text-sm">Pendente</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-info" />
+              <span className="text-sm">Concluído</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-destructive" />
+              <span className="text-sm">Cancelado</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-warning" />
-            <span className="text-sm">Pendente</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-info" />
-            <span className="text-sm">Concluído</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-destructive" />
-            <span className="text-sm">Cancelado</span>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* New/Edit Appointment Modal */}
