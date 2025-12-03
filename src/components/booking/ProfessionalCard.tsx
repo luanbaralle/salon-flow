@@ -1,4 +1,3 @@
-import { Professional } from '@/data/mockData';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -6,7 +5,14 @@ import { Star, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ProfessionalCardProps {
-  professional: Professional;
+  professional: {
+    id: string;
+    name: string;
+    avatar?: string;
+    specialty?: string;
+    rating: number;
+    reviewCount: number;
+  };
   selected?: boolean;
   onClick?: () => void;
 }

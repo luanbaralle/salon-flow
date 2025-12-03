@@ -1,5 +1,8 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { notificationsService } from '@/services/notifications.service';
 import { useApp } from '@/contexts/AppContext';
 import {
   LayoutDashboard,
@@ -14,6 +17,7 @@ import {
   ChevronLeft,
   Bell,
   Sparkles,
+  Star,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -32,13 +36,44 @@ const menuItems = [
   { icon: Scissors, label: 'Serviços', path: '/admin/servicos' },
   { icon: DollarSign, label: 'Financeiro', path: '/admin/financeiro' },
   { icon: Megaphone, label: 'Marketing', path: '/admin/marketing' },
+  { icon: Star, label: 'Avaliações', path: '/admin/avaliacoes' },
   { icon: Settings, label: 'Configurações', path: '/admin/configuracoes' },
 ];
 
 export function AdminSidebar({ collapsed, onToggle }: AdminSidebarProps) {
   const location = useLocation();
-  const { user, logout, notifications, salonSettings } = useApp();
+  const navigate = useNavigate();
+  const { salonSettings } = useApp();
+  const { profile, signOut } = useAuth();
+
+  // Buscar notificações do Supabase
+  const { data: notifications = [] } = useQuery({
+    queryKey: ['notifications', profile?.id],
+    queryFn: () => notificationsService.getAll(profile!.id),
+    enabled: !!profile?.id,
+    refetchInterval: 30000, // Atualizar a cada 30 segundos
+  });
+
   const unreadCount = notifications.filter(n => !n.read).length;
+  
+  // Usar profile do AuthContext
+  const user = profile ? {
+    name: profile.name,
+    email: profile.email,
+    role: profile.role,
+    avatar: profile.avatar_url,
+  } : null;
+  
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      // Mesmo com erro, redirecionar para login
+      navigate('/login', { replace: true });
+    }
+  };
 
   return (
     <aside
@@ -153,7 +188,7 @@ export function AdminSidebar({ collapsed, onToggle }: AdminSidebarProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={logout}
+              onClick={handleLogout}
               className="text-muted-foreground hover:text-destructive"
               title="Sair"
             >

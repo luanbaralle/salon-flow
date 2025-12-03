@@ -1,4 +1,3 @@
-import { Service } from '@/data/mockData';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -6,7 +5,14 @@ import { Clock, DollarSign, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ServiceCardProps {
-  service: Service;
+  service: {
+    id: string;
+    name: string;
+    duration: number;
+    price: number;
+    description?: string;
+    category?: string;
+  };
   selected?: boolean;
   onClick?: () => void;
 }

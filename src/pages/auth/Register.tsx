@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,9 +20,11 @@ const steps = [
 
 export default function Register() {
   const navigate = useNavigate();
+  const { signUp, profile, isAuthenticated } = useAuth();
   const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [signUpSuccess, setSignUpSuccess] = useState(false);
   const [formData, setFormData] = useState({
     // Step 1 - Salon
     salonName: '',
@@ -55,21 +58,80 @@ export default function Register() {
   };
 
   const handleSubmit = async () => {
+    // Validações
+    if (!formData.name || !formData.email || !formData.password) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: 'Preencha todos os campos obrigatórios.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      toast({
+        title: 'Senhas não coincidem',
+        description: 'As senhas devem ser iguais.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast({
+        title: 'Senha muito curta',
+        description: 'A senha deve ter pelo menos 6 caracteres.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    toast({
-      title: 'Conta criada com sucesso!',
-      description: 'Bem-vindo ao BeautySaaS.',
-    });
-    
-    navigate('/login');
-    setLoading(false);
+
+    try {
+      await signUp({
+        email: formData.email,
+        password: formData.password,
+        name: formData.name,
+        salonName: formData.salonName,
+        salonPhone: formData.salonPhone,
+        salonAddress: formData.salonAddress,
+      });
+
+      toast({
+        title: 'Conta criada com sucesso!',
+        description: 'Bem-vindo ao BeautySaaS. Redirecionando...',
+      });
+
+      setSignUpSuccess(true);
+      // O redirecionamento será feito pelo useEffect quando o profile carregar
+    } catch (error: any) {
+      toast({
+        title: 'Erro ao criar conta',
+        description: error.message || 'Ocorreu um erro. Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const updateFormData = (field: string, value: any) => {
     setFormData({ ...formData, [field]: value });
   };
+
+  // Redirecionar quando o profile carregar após signUp
+  useEffect(() => {
+    if (signUpSuccess && isAuthenticated && profile) {
+      if (profile.role === 'admin') {
+        navigate('/admin', { replace: true });
+      } else if (profile.role === 'professional') {
+        navigate('/profissional', { replace: true });
+      } else {
+        navigate('/admin', { replace: true });
+      }
+    }
+  }, [signUpSuccess, isAuthenticated, profile, navigate]);
 
   return (
     <div className="min-h-screen flex">

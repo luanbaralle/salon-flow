@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdminHeader } from '@/components/layout/AdminHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,13 +22,20 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useApp } from '@/contexts/AppContext';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors } from 'lucide-react';
-import { format, addDays, startOfWeek, addWeeks, subWeeks } from 'date-fns';
+import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
+import { appointmentsService, type Appointment } from '@/services/appointments.service';
+import { professionalsService } from '@/services/professionals.service';
+import { servicesService } from '@/services/services.service';
+import { clientsService } from '@/services/clients.service';
+import { reviewsService } from '@/services/reviews.service';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle } from 'lucide-react';
+import { format, addDays, startOfWeek, addWeeks, subWeeks, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/hooks/use-toast';
 
-type ViewMode = 'day' | 'week' | 'month';
+type ViewMode = 'day' | 'week';
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => {
   const hour = Math.floor(i / 2) + 8;
@@ -39,30 +47,184 @@ const timeSlots = Array.from({ length: 24 }, (_, i) => {
 });
 
 export default function AdminAgenda() {
-  const { appointments, professionals, services, clients, addAppointment, updateAppointment } = useApp();
+  const { tenant } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedProfessional, setSelectedProfessional] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
-  const [newAppointment, setNewAppointment] = useState({
-    clientId: '',
-    professionalId: '',
-    serviceId: '',
+  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const [copiedReviewLink, setCopiedReviewLink] = useState(false);
+  const [hasReview, setHasReview] = useState(false);
+  const [formData, setFormData] = useState({
+    client_id: '',
+    professional_id: '',
+    service_id: '',
     date: format(new Date(), 'yyyy-MM-dd'),
-    startTime: '09:00',
+    start_time: '09:00',
+    notes: '',
   });
 
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
+  // Calcular range de datas para buscar agendamentos
+  // Expandir o range para garantir que não perdemos agendamentos
+  const dateRange = useMemo(() => {
+    if (viewMode === 'week') {
+      // Buscar uma semana antes e depois para garantir que vemos todos
+      return {
+        from: format(addDays(weekStart, -7), 'yyyy-MM-dd'),
+        to: format(addDays(weekStart, 13), 'yyyy-MM-dd'), // Semana atual + 1 semana
+      };
+    } else {
+      // Buscar 3 dias antes e depois
+      return {
+        from: format(addDays(currentDate, -3), 'yyyy-MM-dd'),
+        to: format(addDays(currentDate, 3), 'yyyy-MM-dd'),
+      };
+    }
+  }, [viewMode, weekStart, currentDate]);
+
+  // Buscar profissionais
+  const { data: professionals = [] } = useQuery({
+    queryKey: ['professionals', tenant?.id],
+    queryFn: () => professionalsService.getAll(tenant!.id),
+    enabled: !!tenant?.id,
+  });
+
+  // Buscar serviços
+  const { data: services = [] } = useQuery({
+    queryKey: ['services', tenant?.id],
+    queryFn: () => servicesService.getAll(tenant!.id),
+    enabled: !!tenant?.id,
+  });
+
+  // Buscar clientes
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients', tenant?.id],
+    queryFn: () => clientsService.getAll(tenant!.id),
+    enabled: !!tenant?.id,
+  });
+
+  // Buscar agendamentos
+  const { data: appointments = [], isLoading } = useQuery({
+    queryKey: ['appointments', tenant?.id, dateRange.from, dateRange.to, selectedProfessional],
+    queryFn: () =>
+      appointmentsService.getAll(tenant!.id, {
+        dateFrom: dateRange.from,
+        dateTo: dateRange.to,
+        professionalId: selectedProfessional !== 'all' ? selectedProfessional : undefined,
+      }),
+    enabled: !!tenant?.id,
+  });
+
+  // Criar agendamento
+  const createMutation = useMutation({
+    mutationFn: async (data: typeof formData) => {
+      const service = services.find(s => s.id === data.service_id);
+      if (!service) throw new Error('Serviço não encontrado');
+
+      // Calcular end_time baseado na duração do serviço
+      const [startHour, startMinute] = data.start_time.split(':').map(Number);
+      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const endHour = Math.floor(totalMinutes / 60);
+      const endMinute = totalMinutes % 60;
+      const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+
+      return appointmentsService.create(tenant!.id, {
+        client_id: data.client_id,
+        professional_id: data.professional_id,
+        service_id: data.service_id,
+        date: data.date,
+        start_time: data.start_time,
+        end_time,
+        price: service.price,
+        notes: data.notes || undefined,
+        status: 'pending',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      setIsModalOpen(false);
+      setFormData({
+        client_id: '',
+        professional_id: '',
+        service_id: '',
+        date: format(new Date(), 'yyyy-MM-dd'),
+        start_time: '09:00',
+        notes: '',
+      });
+      toast({
+        title: 'Agendamento criado!',
+        description: 'O agendamento foi criado com sucesso.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao criar agendamento',
+        description: error.message || 'Ocorreu um erro ao criar o agendamento.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Atualizar agendamento
+  const updateMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: Partial<Appointment> }) =>
+      appointmentsService.update(id, updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      setEditingAppointment(null);
+      toast({
+        title: 'Agendamento atualizado!',
+        description: 'As alterações foram salvas com sucesso.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao atualizar agendamento',
+        description: error.message || 'Ocorreu um erro ao atualizar o agendamento.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Deletar agendamento
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => appointmentsService.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      setEditingAppointment(null);
+      toast({
+        title: 'Agendamento removido!',
+        description: 'O agendamento foi removido com sucesso.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao remover agendamento',
+        description: error.message || 'Ocorreu um erro ao remover o agendamento.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const getAppointmentsForDay = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
-    return appointments.filter(a => {
-      const matchDate = a.date === dateStr;
-      const matchProfessional = selectedProfessional === 'all' || a.professionalId === selectedProfessional;
-      return matchDate && matchProfessional;
+    const dayAppointments = appointments.filter(a => {
+      // Comparar apenas a parte da data (ignorar timezone)
+      // O campo date pode vir como string 'YYYY-MM-DD' ou como Date object
+      let appointmentDate: string;
+      if (typeof a.date === 'string') {
+        appointmentDate = a.date.split('T')[0]; // Remove timezone se houver
+      } else {
+        appointmentDate = format(new Date(a.date), 'yyyy-MM-dd');
+      }
+      return appointmentDate === dateStr;
     });
+    return dayAppointments;
   };
 
   const getStatusColor = (status: string) => {
@@ -72,6 +234,16 @@ export default function AdminAgenda() {
       case 'cancelled': return 'bg-destructive';
       case 'completed': return 'bg-info';
       default: return 'bg-muted';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'confirmed': return 'Confirmado';
+      case 'pending': return 'Pendente';
+      case 'cancelled': return 'Cancelado';
+      case 'completed': return 'Concluído';
+      default: return status;
     }
   };
 
@@ -91,42 +263,117 @@ export default function AdminAgenda() {
     }
   };
 
-  const handleCreateAppointment = () => {
-    const service = services.find(s => s.id === newAppointment.serviceId);
-    const client = clients.find(c => c.id === newAppointment.clientId);
-    const professional = professionals.find(p => p.id === newAppointment.professionalId);
+  const handleCreate = () => {
+    createMutation.mutate(formData);
+  };
 
-    if (service && client && professional) {
-      const startHour = parseInt(newAppointment.startTime.split(':')[0]);
-      const startMinute = parseInt(newAppointment.startTime.split(':')[1]);
-      const endMinute = startMinute + service.duration;
-      const endHour = startHour + Math.floor(endMinute / 60);
-      const endTime = `${endHour.toString().padStart(2, '0')}:${(endMinute % 60).toString().padStart(2, '0')}`;
+  const handleEdit = (appointment: Appointment) => {
+    setEditingAppointment(appointment);
+    setIsModalOpen(true);
+  };
 
-      addAppointment({
-        clientId: client.id,
-        clientName: client.name,
-        professionalId: professional.id,
-        professionalName: professional.name,
-        serviceId: service.id,
-        serviceName: service.name,
-        date: newAppointment.date,
-        startTime: newAppointment.startTime,
-        endTime,
-        status: 'pending',
-        price: service.price,
+  // Verificar se agendamento já foi avaliado
+  useEffect(() => {
+    if (editingAppointment && editingAppointment.status === 'completed') {
+      reviewsService.getByAppointment(editingAppointment.id)
+        .then(review => setHasReview(!!review))
+        .catch(() => setHasReview(false));
+    } else {
+      setHasReview(false);
+    }
+  }, [editingAppointment]);
+
+  // Atualizar formData quando editingAppointment mudar
+  useEffect(() => {
+    if (editingAppointment) {
+      // Normalizar o formato do horário (remover segundos se houver)
+      const normalizedTime = editingAppointment.start_time.includes(':')
+        ? editingAppointment.start_time.split(':').slice(0, 2).join(':')
+        : editingAppointment.start_time;
+      
+      // Normalizar a data (remover timezone se houver)
+      const normalizedDate = editingAppointment.date.includes('T')
+        ? editingAppointment.date.split('T')[0]
+        : editingAppointment.date;
+      
+      setFormData({
+        client_id: editingAppointment.client_id,
+        professional_id: editingAppointment.professional_id,
+        service_id: editingAppointment.service_id,
+        date: normalizedDate,
+        start_time: normalizedTime,
+        notes: editingAppointment.notes || '',
       });
+    }
+  }, [editingAppointment]);
 
-      setIsModalOpen(false);
-      setNewAppointment({
-        clientId: '',
-        professionalId: '',
-        serviceId: '',
-        date: format(new Date(), 'yyyy-MM-dd'),
-        startTime: '09:00',
+  const handleCopyReviewLink = async (appointmentId: string) => {
+    const reviewLink = `${window.location.origin}/avaliar/${appointmentId}`;
+    try {
+      await navigator.clipboard.writeText(reviewLink);
+      setCopiedReviewLink(true);
+      toast({
+        title: 'Link copiado!',
+        description: 'O link de avaliação foi copiado para a área de transferência.',
+      });
+      setTimeout(() => setCopiedReviewLink(false), 2000);
+    } catch (error) {
+      toast({
+        title: 'Erro ao copiar',
+        description: 'Não foi possível copiar o link.',
+        variant: 'destructive',
       });
     }
   };
+
+  const handleUpdate = () => {
+    if (editingAppointment) {
+      const service = services.find(s => s.id === formData.service_id);
+      if (!service) return;
+
+      // Recalcular end_time se necessário
+      const [startHour, startMinute] = formData.start_time.split(':').map(Number);
+      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const endHour = Math.floor(totalMinutes / 60);
+      const endMinute = totalMinutes % 60;
+      const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+
+      updateMutation.mutate({
+        id: editingAppointment.id,
+        updates: {
+          client_id: formData.client_id,
+          professional_id: formData.professional_id,
+          service_id: formData.service_id,
+          date: formData.date,
+          start_time: formData.start_time,
+          end_time,
+          price: service.price,
+          notes: formData.notes || undefined,
+        },
+      });
+    }
+  };
+
+  const handleStatusChange = (id: string, status: Appointment['status']) => {
+    updateMutation.mutate({ id, updates: { status } });
+  };
+
+  const handleDelete = () => {
+    if (editingAppointment) {
+      deleteMutation.mutate(editingAppointment.id);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Carregando agendamentos...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -180,7 +427,7 @@ export default function AdminAgenda() {
             </Select>
 
             <Button variant="gradient" onClick={() => setIsModalOpen(true)}>
-              <Plus className="h-4 w-4" />
+              <Plus className="h-4 w-4 mr-2" />
               Novo Agendamento
             </Button>
           </div>
@@ -228,16 +475,23 @@ export default function AdminAgenda() {
                         {time}
                       </div>
                       {(viewMode === 'week' ? weekDays : [currentDate]).map((day) => {
-                        const dayAppointments = getAppointmentsForDay(day).filter(
-                          a => a.startTime === time
-                        );
+                        const dayAppointments = getAppointmentsForDay(day).filter(a => {
+                          // Normalizar o formato do horário (remover segundos se houver)
+                          const aptTime = a.start_time.includes(':') 
+                            ? a.start_time.split(':').slice(0, 2).join(':')
+                            : a.start_time;
+                          
+                          // Comparar exatamente
+                          return aptTime === time;
+                        });
                         return (
                           <div
                             key={`${day.toISOString()}-${time}`}
                             className="border-l p-1 relative"
                           >
                             {dayAppointments.map((apt) => {
-                              const professional = professionals.find(p => p.id === apt.professionalId);
+                              const client = clients.find(c => c.id === apt.client_id);
+                              const service = services.find(s => s.id === apt.service_id);
                               return (
                                 <div
                                   key={apt.id}
@@ -249,16 +503,14 @@ export default function AdminAgenda() {
                                     top: '2px',
                                     minHeight: '56px',
                                   }}
-                                  onClick={() => {
-                                    setSelectedAppointment(apt);
-                                  }}
+                                  onClick={() => handleEdit(apt)}
                                 >
                                   <div className="flex items-center gap-1 mb-1">
                                     <div className={cn('h-2 w-2 rounded-full', getStatusColor(apt.status))} />
-                                    <span className="font-medium truncate">{apt.clientName}</span>
+                                    <span className="font-medium truncate">{client?.name || 'Cliente'}</span>
                                   </div>
-                                  <p className="text-muted-foreground truncate">{apt.serviceName}</p>
-                                  <p className="text-[10px] text-muted-foreground">{apt.startTime} - {apt.endTime}</p>
+                                  <p className="text-muted-foreground truncate">{service?.name || 'Serviço'}</p>
+                                  <p className="text-[10px] text-muted-foreground">{apt.start_time} - {apt.end_time}</p>
                                 </div>
                               );
                             })}
@@ -295,21 +547,34 @@ export default function AdminAgenda() {
         </div>
       </div>
 
-      {/* New Appointment Modal */}
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+      {/* New/Edit Appointment Modal */}
+      <Dialog open={isModalOpen || !!editingAppointment} onOpenChange={(open) => {
+        if (!open) {
+          setIsModalOpen(false);
+          setEditingAppointment(null);
+          setFormData({
+            client_id: '',
+            professional_id: '',
+            service_id: '',
+            date: format(new Date(), 'yyyy-MM-dd'),
+            start_time: '09:00',
+            notes: '',
+          });
+        }
+      }}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Novo Agendamento</DialogTitle>
+            <DialogTitle>{editingAppointment ? 'Editar Agendamento' : 'Novo Agendamento'}</DialogTitle>
             <DialogDescription>
-              Preencha os dados para criar um novo agendamento
+              {editingAppointment ? 'Atualize os dados do agendamento' : 'Preencha os dados para criar um novo agendamento'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Cliente</Label>
+              <Label>Cliente *</Label>
               <Select
-                value={newAppointment.clientId}
-                onValueChange={(v) => setNewAppointment({ ...newAppointment, clientId: v })}
+                value={formData.client_id}
+                onValueChange={(v) => setFormData({ ...formData, client_id: v })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione o cliente" />
@@ -328,10 +593,10 @@ export default function AdminAgenda() {
             </div>
 
             <div className="space-y-2">
-              <Label>Profissional</Label>
+              <Label>Profissional *</Label>
               <Select
-                value={newAppointment.professionalId}
-                onValueChange={(v) => setNewAppointment({ ...newAppointment, professionalId: v })}
+                value={formData.professional_id}
+                onValueChange={(v) => setFormData({ ...formData, professional_id: v })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione o profissional" />
@@ -353,10 +618,10 @@ export default function AdminAgenda() {
             </div>
 
             <div className="space-y-2">
-              <Label>Serviço</Label>
+              <Label>Serviço *</Label>
               <Select
-                value={newAppointment.serviceId}
-                onValueChange={(v) => setNewAppointment({ ...newAppointment, serviceId: v })}
+                value={formData.service_id}
+                onValueChange={(v) => setFormData({ ...formData, service_id: v })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione o serviço" />
@@ -366,7 +631,7 @@ export default function AdminAgenda() {
                     <SelectItem key={s.id} value={s.id}>
                       <div className="flex items-center gap-2">
                         <Scissors className="h-4 w-4" />
-                        {s.name} - R$ {s.price}
+                        {s.name} - R$ {s.price.toFixed(2)}
                       </div>
                     </SelectItem>
                   ))}
@@ -376,18 +641,18 @@ export default function AdminAgenda() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Data</Label>
+                <Label>Data *</Label>
                 <Input
                   type="date"
-                  value={newAppointment.date}
-                  onChange={(e) => setNewAppointment({ ...newAppointment, date: e.target.value })}
+                  value={formData.date}
+                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Horário</Label>
+                <Label>Horário *</Label>
                 <Select
-                  value={newAppointment.startTime}
-                  onValueChange={(v) => setNewAppointment({ ...newAppointment, startTime: v })}
+                  value={formData.start_time}
+                  onValueChange={(v) => setFormData({ ...formData, start_time: v })}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -400,90 +665,132 @@ export default function AdminAgenda() {
                 </Select>
               </div>
             </div>
+
+            <div className="space-y-2">
+              <Label>Observações</Label>
+              <Textarea
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Observações sobre o agendamento..."
+                rows={3}
+              />
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button variant="gradient" onClick={handleCreateAppointment}>
-              Criar Agendamento
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Appointment Details Modal */}
-      <Dialog open={!!selectedAppointment} onOpenChange={() => setSelectedAppointment(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Detalhes do Agendamento</DialogTitle>
-          </DialogHeader>
-          {selectedAppointment && (
-            <div className="space-y-4 py-4">
-              <div className="flex items-center gap-4">
-                <Avatar className="h-12 w-12">
-                  <AvatarFallback className="bg-primary-light text-primary">
-                    {selectedAppointment.clientName.charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-semibold">{selectedAppointment.clientName}</p>
-                  <p className="text-sm text-muted-foreground">{selectedAppointment.serviceName}</p>
-                </div>
-                <Badge variant={selectedAppointment.status} className="ml-auto">
-                  {selectedAppointment.status === 'confirmed' && 'Confirmado'}
-                  {selectedAppointment.status === 'pending' && 'Pendente'}
-                  {selectedAppointment.status === 'cancelled' && 'Cancelado'}
-                  {selectedAppointment.status === 'completed' && 'Concluído'}
-                </Badge>
+          {editingAppointment && (
+            <div className="mt-4 pt-4 border-t space-y-3">
+              <p className="text-sm text-muted-foreground font-medium">Ações rápidas:</p>
+              <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleStatusChange(editingAppointment.id, 'confirmed')}
+                disabled={editingAppointment.status === 'confirmed' || updateMutation.isPending}
+              >
+                <Check className="h-4 w-4 mr-2" />
+                Confirmar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleStatusChange(editingAppointment.id, 'completed')}
+                disabled={editingAppointment.status === 'completed' || updateMutation.isPending}
+              >
+                Concluir
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleStatusChange(editingAppointment.id, 'cancelled')}
+                disabled={editingAppointment.status === 'cancelled' || updateMutation.isPending}
+              >
+                Cancelar
+              </Button>
               </div>
-
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Profissional</p>
-                  <p className="font-medium">{selectedAppointment.professionalName}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Valor</p>
-                  <p className="font-medium">R$ {selectedAppointment.price}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Data</p>
-                  <p className="font-medium">
-                    {format(new Date(selectedAppointment.date), "dd/MM/yyyy")}
+              {editingAppointment.status === 'completed' && (
+                <div className="mt-3 pt-3 border-t">
+                  <div className="flex items-center gap-2 mb-2">
+                    <p className="text-sm font-medium">Link de avaliação:</p>
+                    {hasReview && (
+                      <Badge variant="soft-success" className="gap-1">
+                        <Star className="h-3 w-3 fill-warning text-warning" />
+                        Já avaliado
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={`${window.location.origin}/avaliar/${editingAppointment.id}`}
+                      readOnly
+                      className="font-mono text-xs bg-muted"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopyReviewLink(editingAppointment.id)}
+                      className="shrink-0"
+                    >
+                      {copiedReviewLink ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 mr-2 text-success" />
+                          Copiado!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4 mr-2" />
+                          Copiar
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {hasReview 
+                      ? 'Este agendamento já foi avaliado pelo cliente'
+                      : 'Envie este link para o cliente avaliar o atendimento'}
                   </p>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">Horário</p>
-                  <p className="font-medium">
-                    {selectedAppointment.startTime} - {selectedAppointment.endTime}
-                  </p>
-                </div>
-              </div>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button
-              variant="soft-destructive"
+              variant="outline"
               onClick={() => {
-                updateAppointment(selectedAppointment.id, { status: 'cancelled' });
-                setSelectedAppointment(null);
+                setIsModalOpen(false);
+                setEditingAppointment(null);
               }}
             >
-              Cancelar Agendamento
+              Cancelar
             </Button>
+            {editingAppointment && (
+              <Button
+                variant="outline"
+                onClick={handleDelete}
+                disabled={deleteMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {deleteMutation.isPending ? 'Removendo...' : 'Remover'}
+              </Button>
+            )}
             <Button
-              variant="success"
-              onClick={() => {
-                updateAppointment(selectedAppointment.id, { status: 'confirmed' });
-                setSelectedAppointment(null);
-              }}
+              variant="gradient"
+              onClick={editingAppointment ? handleUpdate : handleCreate}
+              disabled={
+                !formData.client_id ||
+                !formData.professional_id ||
+                !formData.service_id ||
+                createMutation.isPending ||
+                updateMutation.isPending
+              }
             >
-              Confirmar
+              {editingAppointment
+                ? (updateMutation.isPending ? 'Salvando...' : 'Salvar')
+                : (createMutation.isPending ? 'Criando...' : 'Criar')
+              }
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }

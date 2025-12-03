@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApp } from '@/contexts/AppContext';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
+import { notificationsService } from '@/services/notifications.service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -23,10 +25,47 @@ interface AdminHeaderProps {
 }
 
 export function AdminHeader({ title, subtitle, onMenuClick }: AdminHeaderProps) {
-  const { user, notifications, markNotificationRead, logout } = useApp();
+  const { profile, signOut } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Buscar notificações do Supabase
+  const { data: notifications = [] } = useQuery({
+    queryKey: ['notifications', profile?.id],
+    queryFn: () => notificationsService.getAll(profile!.id),
+    enabled: !!profile?.id,
+    refetchInterval: 30000, // Atualizar a cada 30 segundos
+  });
+
+  // Marcar notificação como lida
+  const markAsReadMutation = useMutation({
+    mutationFn: (id: string) => notificationsService.markAsRead(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+
   const unreadNotifications = notifications.filter(n => !n.read);
+  
+  // Usar profile do AuthContext
+  const user = profile ? {
+    name: profile.name,
+    email: profile.email,
+    role: profile.role,
+    avatar: profile.avatar_url,
+  } : null;
+  
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      // Mesmo com erro, redirecionar para login
+      navigate('/login', { replace: true });
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
@@ -106,30 +145,51 @@ export function AdminHeader({ title, subtitle, onMenuClick }: AdminHeaderProps) 
               )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {notifications.slice(0, 5).map((notification) => (
-              <DropdownMenuItem
-                key={notification.id}
-                className={cn(
-                  'flex flex-col items-start gap-1 p-3 cursor-pointer',
-                  !notification.read && 'bg-primary-light/30'
-                )}
-                onClick={() => markNotificationRead(notification.id)}
-              >
-                <div className="flex items-center gap-2 w-full">
-                  <span className={cn(
-                    'h-2 w-2 rounded-full',
-                    notification.type === 'success' && 'bg-success',
-                    notification.type === 'warning' && 'bg-warning',
-                    notification.type === 'error' && 'bg-destructive',
-                    notification.type === 'info' && 'bg-info'
-                  )} />
-                  <span className="font-medium text-sm">{notification.title}</span>
-                </div>
-                <p className="text-xs text-muted-foreground line-clamp-2 pl-4">
-                  {notification.message}
-                </p>
-              </DropdownMenuItem>
-            ))}
+            {notifications.length === 0 ? (
+              <div className="p-4 text-center text-sm text-muted-foreground">
+                Nenhuma notificação
+              </div>
+            ) : (
+              notifications.slice(0, 5).map((notification) => (
+                <DropdownMenuItem
+                  key={notification.id}
+                  className={cn(
+                    'flex flex-col items-start gap-1 p-3 cursor-pointer',
+                    !notification.read && 'bg-primary-light/30'
+                  )}
+                  onClick={() => {
+                    if (!notification.read) {
+                      markAsReadMutation.mutate(notification.id);
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    <span className={cn(
+                      'h-2 w-2 rounded-full shrink-0',
+                      notification.category === 'appointment' && 'bg-info',
+                      notification.category === 'payment' && 'bg-success',
+                      notification.category === 'marketing' && 'bg-warning',
+                      notification.category === 'system' && 'bg-destructive',
+                      !notification.category && 'bg-muted-foreground'
+                    )} />
+                    <span className="font-medium text-sm flex-1">{notification.title}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground line-clamp-2 pl-4">
+                    {notification.message}
+                  </p>
+                  {notification.created_at && (
+                    <p className="text-[10px] text-muted-foreground pl-4 mt-1">
+                      {new Date(notification.created_at).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  )}
+                </DropdownMenuItem>
+              ))
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-center justify-center text-primary"
@@ -169,7 +229,7 @@ export function AdminHeader({ title, subtitle, onMenuClick }: AdminHeaderProps) 
               Meu Perfil
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive">
+            <DropdownMenuItem onClick={handleLogout} className="text-destructive">
               Sair
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useApp } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,7 +12,8 @@ import { useToast } from '@/hooks/use-toast';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login } = useApp();
+  const location = useLocation();
+  const { signIn, profile, isAuthenticated } = useAuth();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -21,25 +22,42 @@ export default function Login() {
     password: '',
   });
 
-  const handleSubmit = async (e: React.FormEvent, role: 'admin' | 'professional') => {
+  // Redirecionar se já estiver autenticado
+  useEffect(() => {
+    if (isAuthenticated && profile) {
+      setLoading(false); // Parar loading quando profile carregar
+      const from = (location.state as any)?.from?.pathname || '/admin';
+      if (profile.role === 'admin') {
+        navigate('/admin', { replace: true });
+      } else if (profile.role === 'professional') {
+        navigate('/profissional', { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
+    }
+  }, [isAuthenticated, profile, navigate, location]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      await signIn(formData.email, formData.password);
+      
+      toast({
+        title: 'Login realizado com sucesso!',
+        description: 'Bem-vindo de volta.',
+      });
 
-    login(formData.email, formData.password, role);
-    toast({
-      title: 'Login realizado com sucesso!',
-      description: 'Bem-vindo de volta.',
-    });
-
-    if (role === 'admin') {
-      navigate('/admin');
-    } else {
-      navigate('/profissional');
+      // O redirecionamento será feito pelo useEffect quando o profile carregar
+    } catch (error: any) {
+      toast({
+        title: 'Erro ao fazer login',
+        description: error.message || 'Email ou senha incorretos',
+        variant: 'destructive',
+      });
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -73,7 +91,7 @@ export default function Login() {
                 </TabsList>
 
                 <TabsContent value="admin">
-                  <form onSubmit={(e) => handleSubmit(e, 'admin')} className="space-y-4">
+                  <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="email-admin">Email</Label>
                       <div className="relative">
@@ -134,7 +152,7 @@ export default function Login() {
                 </TabsContent>
 
                 <TabsContent value="professional">
-                  <form onSubmit={(e) => handleSubmit(e, 'professional')} className="space-y-4">
+                  <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="email-prof">Email</Label>
                       <div className="relative">

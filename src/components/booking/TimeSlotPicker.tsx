@@ -1,14 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { generateTimeSlots } from '@/data/mockData';
+import { bookingService } from '@/services/booking.service';
 import { cn } from '@/lib/utils';
-import { CalendarDays, Clock } from 'lucide-react';
+import { CalendarDays, Clock, Loader2 } from 'lucide-react';
+import { format } from 'date-fns';
 
 interface TimeSlotPickerProps {
+  tenantId: string;
   professionalId: string;
+  serviceId: string;
   selectedDate?: Date;
   selectedTime?: string;
   onDateChange: (date: Date | undefined) => void;
@@ -16,7 +20,9 @@ interface TimeSlotPickerProps {
 }
 
 export function TimeSlotPicker({
+  tenantId,
   professionalId,
+  serviceId,
   selectedDate,
   selectedTime,
   onDateChange,
@@ -24,14 +30,24 @@ export function TimeSlotPicker({
 }: TimeSlotPickerProps) {
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
 
+  // Buscar horários disponíveis quando a data mudar
+  const { data: slots = [], isLoading: slotsLoading } = useQuery({
+    queryKey: ['availableSlots', tenantId, professionalId, serviceId, selectedDate],
+    queryFn: () => {
+      if (!selectedDate) return [];
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      return bookingService.getAvailableTimeSlots(tenantId, professionalId, serviceId, dateStr);
+    },
+    enabled: !!tenantId && !!professionalId && !!serviceId && !!selectedDate,
+  });
+
+  useEffect(() => {
+    setAvailableSlots(slots);
+  }, [slots]);
+
   const handleDateChange = (date: Date | undefined) => {
     onDateChange(date);
-    if (date) {
-      const slots = generateTimeSlots(date, professionalId);
-      setAvailableSlots(slots);
-    } else {
-      setAvailableSlots([]);
-    }
+    onTimeChange(''); // Limpar horário selecionado ao mudar data
   };
 
   const morningSlots = availableSlots.filter(slot => {
@@ -90,6 +106,13 @@ export function TimeSlotPicker({
               <CalendarDays className="h-12 w-12 text-muted-foreground/50 mb-3" />
               <p className="text-muted-foreground">
                 Selecione uma data para ver os horários
+              </p>
+            </div>
+          ) : slotsLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Loader2 className="h-12 w-12 text-muted-foreground/50 mb-3 animate-spin" />
+              <p className="text-muted-foreground">
+                Carregando horários disponíveis...
               </p>
             </div>
           ) : availableSlots.length === 0 ? (
