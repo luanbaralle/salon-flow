@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { AdminHeader } from '@/components/layout/AdminHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -62,6 +63,8 @@ export default function AdminAgenda() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedProfessional, setSelectedProfessional] = useState<string>('all');
@@ -581,6 +584,25 @@ export default function AdminAgenda() {
     setEditingAppointment(appointment);
     setIsModalOpen(true);
   };
+
+  // Abrir modal automaticamente quando vier de redirecionamento com ?new=true
+  useEffect(() => {
+    const shouldOpenNew = searchParams.get('new') === 'true';
+    const appointmentId = searchParams.get('appointment');
+    
+    if (shouldOpenNew && !isModalOpen && !editingAppointment) {
+      setIsModalOpen(true);
+      // Remover parâmetro da URL após abrir o modal
+      setSearchParams({}, { replace: true });
+    } else if (appointmentId && !editingAppointment) {
+      // Se houver appointment ID na URL, buscar e editar
+      const appointment = appointments.find(a => a.id === appointmentId);
+      if (appointment) {
+        handleEdit(appointment);
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, isModalOpen, editingAppointment, appointments]);
 
   // Verificar se agendamento já foi avaliado
   useEffect(() => {
