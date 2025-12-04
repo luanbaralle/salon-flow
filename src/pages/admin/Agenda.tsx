@@ -33,6 +33,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { appointmentsService, type Appointment } from '@/services/appointments.service';
 import { professionalsService } from '@/services/professionals.service';
@@ -92,7 +94,7 @@ export default function AdminAgenda() {
   const [formData, setFormData] = useState({
     client_id: '',
     professional_id: '',
-    service_id: '',
+    service_ids: [] as string[],
     date: format(new Date(), 'yyyy-MM-dd'),
     start_time: '09:00',
     notes: '',
@@ -210,7 +212,7 @@ export default function AdminAgenda() {
       }),
     onSuccess: async (newService) => {
       await refetchServices();
-      setFormData({ ...formData, service_id: newService.id });
+      setFormData({ ...formData, service_ids: [...formData.service_ids, newService.id] });
       setIsServiceModalOpen(false);
       setNewServiceData({ name: '', duration: 60, price: 0, category: '' });
       toast({
@@ -237,6 +239,37 @@ export default function AdminAgenda() {
         professionalId: selectedProfessional !== 'all' ? selectedProfessional : undefined,
       }),
     enabled: !!tenant?.id,
+  });
+
+  // Buscar serviços adicionais de todos os agendamentos
+  const { data: appointmentServicesMap = {} } = useQuery({
+    queryKey: ['appointment-services', appointments.map(a => a.id).join(',')],
+    queryFn: async () => {
+      if (appointments.length === 0) return {};
+      
+      const appointmentIds = appointments.map(a => a.id);
+      const { data } = await supabase
+        .from('appointment_services')
+        .select('appointment_id, service_id')
+        .in('appointment_id', appointmentIds);
+      
+      const map: Record<string, string[]> = {};
+      appointments.forEach(apt => {
+        map[apt.id] = [apt.service_id];
+      });
+      
+      data?.forEach((as: any) => {
+        if (!map[as.appointment_id]) {
+          map[as.appointment_id] = [];
+        }
+        if (!map[as.appointment_id].includes(as.service_id)) {
+          map[as.appointment_id].push(as.service_id);
+        }
+      });
+      
+      return map;
+    },
+    enabled: appointments.length > 0,
   });
 
   // Função para verificar conflitos de horário
@@ -282,18 +315,53 @@ export default function AdminAgenda() {
     return null;
   };
 
+  // Calcular duração e preço total dos serviços selecionados
+  const selectedServicesInfo = useMemo(() => {
+    const selectedServices = services.filter(s => formData.service_ids.includes(s.id));
+    const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration, 0);
+    const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
+    
+    // Calcular end_time baseado na duração total
+    const [startHour, startMinute] = formData.start_time.split(':').map(Number);
+    const totalMinutes = startHour * 60 + startMinute + totalDuration;
+    const endHour = Math.floor(totalMinutes / 60);
+    const endMinute = totalMinutes % 60;
+    const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    return {
+      services: selectedServices,
+      totalDuration,
+      totalPrice,
+      end_time,
+    };
+  }, [formData.service_ids, formData.start_time, services]);
+
   // Criar agendamento
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
-      const service = services.find(s => s.id === data.service_id);
-      if (!service) throw new Error('Serviço não encontrado');
+      if (data.service_ids.length === 0) {
+        throw new Error('Selecione pelo menos um serviço');
+      }
 
-      // Calcular end_time baseado na duração do serviço
+      // Usar o primeiro serviço como principal (para compatibilidade com schema atual)
+      const primaryService = services.find(s => s.id === data.service_ids[0]);
+      if (!primaryService) throw new Error('Serviço não encontrado');
+
+      // Calcular end_time baseado na duração total dos serviços
+      const totalDuration = services
+        .filter(s => data.service_ids.includes(s.id))
+        .reduce((sum, s) => sum + s.duration, 0);
+      
       const [startHour, startMinute] = data.start_time.split(':').map(Number);
-      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const totalMinutes = startHour * 60 + startMinute + totalDuration;
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+
+      // Calcular preço total
+      const totalPrice = services
+        .filter(s => data.service_ids.includes(s.id))
+        .reduce((sum, s) => sum + s.price, 0);
 
       // Verificar conflito de horário
       const conflict = checkTimeConflict(
@@ -313,17 +381,31 @@ export default function AdminAgenda() {
         );
       }
 
-      return appointmentsService.create(tenant!.id, {
+      // Criar agendamento com primeiro serviço como principal
+      const appointment = await appointmentsService.create(tenant!.id, {
         client_id: data.client_id,
         professional_id: data.professional_id,
-        service_id: data.service_id,
+        service_id: data.service_ids[0], // Primeiro serviço como principal
         date: data.date,
         start_time: data.start_time,
         end_time,
-        price: service.price,
+        price: totalPrice,
         notes: data.notes || undefined,
         status: 'pending',
       });
+
+      // Adicionar serviços adicionais na tabela de relacionamento
+      if (data.service_ids.length > 1) {
+        const additionalServices = data.service_ids.slice(1);
+        for (const serviceId of additionalServices) {
+          await supabase.from('appointment_services').insert({
+            appointment_id: appointment.id,
+            service_id: serviceId,
+          });
+        }
+      }
+
+      return appointment;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
@@ -331,7 +413,7 @@ export default function AdminAgenda() {
       setFormData({
         client_id: '',
         professional_id: '',
-        service_id: '',
+        service_ids: [],
         date: format(new Date(), 'yyyy-MM-dd'),
         start_time: '09:00',
         notes: '',
@@ -524,14 +606,41 @@ export default function AdminAgenda() {
         ? editingAppointment.date.split('T')[0]
         : editingAppointment.date;
       
-      setFormData({
-        client_id: editingAppointment.client_id,
-        professional_id: editingAppointment.professional_id,
-        service_id: editingAppointment.service_id,
-        date: normalizedDate,
-        start_time: normalizedTime,
-        notes: editingAppointment.notes || '',
-      });
+      // Buscar serviços adicionais do agendamento
+      const fetchAdditionalServices = async () => {
+        try {
+          const { data: additionalServices } = await supabase
+            .from('appointment_services')
+            .select('service_id')
+            .eq('appointment_id', editingAppointment.id);
+          
+          const allServiceIds = [
+            editingAppointment.service_id,
+            ...(additionalServices?.map((as: any) => as.service_id) || [])
+          ];
+          
+          setFormData({
+            client_id: editingAppointment.client_id,
+            professional_id: editingAppointment.professional_id,
+            service_ids: allServiceIds,
+            date: normalizedDate,
+            start_time: normalizedTime,
+            notes: editingAppointment.notes || '',
+          });
+        } catch {
+          // Se não houver serviços adicionais, usar apenas o principal
+          setFormData({
+            client_id: editingAppointment.client_id,
+            professional_id: editingAppointment.professional_id,
+            service_ids: [editingAppointment.service_id],
+            date: normalizedDate,
+            start_time: normalizedTime,
+            notes: editingAppointment.notes || '',
+          });
+        }
+      };
+      
+      fetchAdditionalServices();
     }
   }, [editingAppointment]);
 
@@ -554,14 +663,25 @@ export default function AdminAgenda() {
     }
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (editingAppointment) {
-      const service = services.find(s => s.id === formData.service_id);
-      if (!service) return;
+      if (formData.service_ids.length === 0) {
+        toast({
+          title: 'Serviço obrigatório',
+          description: 'Selecione pelo menos um serviço.',
+          variant: 'destructive',
+        });
+        return;
+      }
 
-      // Recalcular end_time se necessário
+      // Calcular duração total e preço total
+      const selectedServices = services.filter(s => formData.service_ids.includes(s.id));
+      const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration, 0);
+      const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
+
+      // Recalcular end_time baseado na duração total
       const [startHour, startMinute] = formData.start_time.split(':').map(Number);
-      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const totalMinutes = startHour * 60 + startMinute + totalDuration;
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
@@ -588,19 +708,38 @@ export default function AdminAgenda() {
         return;
       }
 
-      updateMutation.mutate({
+      // Atualizar agendamento principal
+      await updateMutation.mutateAsync({
         id: editingAppointment.id,
         updates: {
           client_id: formData.client_id,
           professional_id: formData.professional_id,
-          service_id: formData.service_id,
+          service_id: formData.service_ids[0], // Primeiro serviço como principal
           date: formData.date,
           start_time: formData.start_time,
           end_time,
-          price: service.price,
+          price: totalPrice,
           notes: formData.notes || undefined,
         },
       });
+
+      // Atualizar serviços adicionais
+      // Remover serviços antigos
+      await supabase
+        .from('appointment_services')
+        .delete()
+        .eq('appointment_id', editingAppointment.id);
+
+      // Adicionar novos serviços adicionais (exceto o primeiro que já está no appointment principal)
+      if (formData.service_ids.length > 1) {
+        const additionalServices = formData.service_ids.slice(1);
+        for (const serviceId of additionalServices) {
+          await supabase.from('appointment_services').insert({
+            appointment_id: editingAppointment.id,
+            service_id: serviceId,
+          });
+        }
+      }
     }
   };
 
@@ -800,10 +939,25 @@ export default function AdminAgenda() {
                                 {getStatusLabel(appointment.status)}
                               </Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
-                              <Scissors className="h-3 w-3" />
-                              {service?.name || 'Serviço'}
-                            </p>
+                            {(() => {
+                              const appointmentServiceIds = appointmentServicesMap[appointment.id] || [appointment.service_id];
+                              const appointmentServices = appointmentServiceIds
+                                .map(id => services.find(s => s.id === id))
+                                .filter(Boolean);
+                              const serviceNames = appointmentServices.map(s => s!.name);
+                              
+                              return (
+                                <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
+                                  <Scissors className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    {serviceNames.length === 1 
+                                      ? serviceNames[0]
+                                      : `${serviceNames.length} serviços: ${serviceNames.slice(0, 2).join(', ')}${serviceNames.length > 2 ? '...' : ''}`
+                                    }
+                                  </span>
+                                </p>
+                              );
+                            })()}
                             <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
                               <User className="h-3 w-3" />
                               {professional?.name || 'Profissional'}
@@ -920,7 +1074,22 @@ export default function AdminAgenda() {
                                     <div className={cn('h-2 w-2 rounded-full', getStatusColor(apt.status))} />
                                     <span className="font-semibold truncate">{client?.name || 'Cliente'}</span>
                                   </div>
-                                  <p className="text-muted-foreground truncate font-medium">{service?.name || 'Serviço'}</p>
+                                  {(() => {
+                                    const appointmentServiceIds = appointmentServicesMap[apt.id] || [apt.service_id];
+                                    const appointmentServices = appointmentServiceIds
+                                      .map(id => services.find(s => s.id === id))
+                                      .filter(Boolean);
+                                    const serviceNames = appointmentServices.map(s => s!.name);
+                                    
+                                    return (
+                                      <p className="text-muted-foreground truncate font-medium">
+                                        {serviceNames.length === 1 
+                                          ? serviceNames[0]
+                                          : `${serviceNames.length} serviços`
+                                        }
+                                      </p>
+                                    );
+                                  })()}
                                   <p className="text-[10px] text-muted-foreground">{apt.start_time} - {apt.end_time}</p>
                                 </div>
                               );
@@ -969,7 +1138,7 @@ export default function AdminAgenda() {
           setFormData({
             client_id: '',
             professional_id: '',
-            service_id: '',
+            service_ids: [],
             date: format(new Date(), 'yyyy-MM-dd'),
             start_time: '09:00',
             notes: '',
@@ -1093,53 +1262,134 @@ export default function AdminAgenda() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Serviço *</Label>
+                <Label>Serviços *</Label>
                 {services.length === 0 && (
                   <span className="text-xs text-muted-foreground">Nenhum serviço cadastrado</span>
                 )}
               </div>
-              <Select
-                value={formData.service_id}
-                onValueChange={(v) => {
-                  if (v === 'new-service') {
-                    setIsServiceModalOpen(true);
-                  } else {
-                    setFormData({ ...formData, service_id: v });
-                  }
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={services.length === 0 ? "Cadastre um serviço primeiro" : "Selecione o serviço"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {services.length === 0 ? (
-                    <SelectItem value="new-service" className="text-primary font-medium">
-                      <div className="flex items-center gap-2">
-                        <Plus className="h-4 w-4" />
-                        Cadastrar novo serviço
-                      </div>
-                    </SelectItem>
-                  ) : (
-                    <>
-                      {services.map(s => (
-                        <SelectItem key={s.id} value={s.id}>
-                          <div className="flex items-center gap-2">
-                            <Scissors className="h-4 w-4" />
-                            {s.name} - R$ {s.price.toFixed(2)}
+              {services.length === 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setIsServiceModalOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Cadastrar novo serviço
+                </Button>
+              ) : (
+                <div className="space-y-3">
+                  <ScrollArea className="h-[200px] border rounded-lg p-4">
+                    <div className="space-y-3">
+                      {services.map(s => {
+                        const isSelected = formData.service_ids.includes(s.id);
+                        return (
+                          <div
+                            key={s.id}
+                            className={cn(
+                              "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                              isSelected && "bg-primary-light/10 border-primary"
+                            )}
+                            onClick={() => {
+                              if (isSelected) {
+                                setFormData({
+                                  ...formData,
+                                  service_ids: formData.service_ids.filter(id => id !== s.id),
+                                });
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  service_ids: [...formData.service_ids, s.id],
+                                });
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setFormData({
+                                    ...formData,
+                                    service_ids: [...formData.service_ids, s.id],
+                                  });
+                                } else {
+                                  setFormData({
+                                    ...formData,
+                                    service_ids: formData.service_ids.filter(id => id !== s.id),
+                                  });
+                                }
+                              }}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <Scissors className="h-4 w-4 text-muted-foreground shrink-0" />
+                                <p className="font-medium">{s.name}</p>
+                              </div>
+                              <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {s.duration} min
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <DollarSign className="h-3 w-3" />
+                                  R$ {s.price.toFixed(2)}
+                                </span>
+                                {s.category && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {s.category}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                        </SelectItem>
-                      ))}
-                      <div className="border-t my-1" />
-                      <SelectItem value="new-service" className="text-primary font-medium">
-                        <div className="flex items-center gap-2">
-                          <Plus className="h-4 w-4" />
-                          Cadastrar novo serviço
-                        </div>
-                      </SelectItem>
-                    </>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                  {formData.service_ids.length > 0 && (
+                    <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Serviços selecionados:</span>
+                        <span className="font-semibold">{formData.service_ids.length}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Duração total:</span>
+                        <span className="font-semibold flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {selectedServicesInfo.totalDuration} min
+                          {selectedServicesInfo.totalDuration >= 60 && (
+                            <span className="text-muted-foreground font-normal">
+                              ({Math.floor(selectedServicesInfo.totalDuration / 60)}h {selectedServicesInfo.totalDuration % 60}min)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Preço total:</span>
+                        <span className="font-semibold text-success flex items-center gap-1">
+                          <DollarSign className="h-3 w-3" />
+                          R$ {selectedServicesInfo.totalPrice.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm pt-2 border-t">
+                        <span className="text-muted-foreground">Horário de término:</span>
+                        <span className="font-semibold">
+                          {formData.start_time.substring(0, 5)} - {selectedServicesInfo.end_time.substring(0, 5)}
+                        </span>
+                      </div>
+                    </div>
                   )}
-                </SelectContent>
-              </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setIsServiceModalOpen(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Cadastrar novo serviço
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -1281,7 +1531,7 @@ export default function AdminAgenda() {
               disabled={
                 !formData.client_id ||
                 !formData.professional_id ||
-                !formData.service_id ||
+                formData.service_ids.length === 0 ||
                 createMutation.isPending ||
                 updateMutation.isPending
               }
