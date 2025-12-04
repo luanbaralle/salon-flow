@@ -29,6 +29,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import { ThemeToggleSimple } from '@/components/ui/theme-toggle';
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -145,6 +146,7 @@ export default function Landing() {
             </nav>
 
             <div className="hidden md:flex items-center gap-3">
+              <ThemeToggleSimple />
               <Button variant="ghost" onClick={() => navigate('/login')}>
                 Entrar
               </Button>
@@ -153,15 +155,16 @@ export default function Landing() {
               </Button>
             </div>
 
-            {/* Mobile Menu Button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <X /> : <Menu />}
-            </Button>
+            <div className="flex items-center gap-2 md:hidden">
+              <ThemeToggleSimple />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              >
+                {mobileMenuOpen ? <X /> : <Menu />}
+              </Button>
+            </div>
           </div>
         </div>
 

@@ -822,7 +822,16 @@ export default function AdminAgenda() {
               <SelectContent>
                 <SelectItem value="all">Todos os profissionais</SelectItem>
                 {professionals.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  <SelectItem key={p.id} value={p.id}>
+                    <div className="flex items-center gap-2">
+                      <span>{p.name}</span>
+                      {p.specialty && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {p.specialty}
+                        </Badge>
+                      )}
+                    </div>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -980,9 +989,14 @@ export default function AdminAgenda() {
                                 </p>
                               );
                             })()}
-                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                               <User className="h-3 w-3" />
-                              {professional?.name || 'Profissional'}
+                              <span>{professional?.name || 'Profissional'}</span>
+                              {professional?.specialty && (
+                                <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+                                  {professional.specialty}
+                                </Badge>
+                              )}
                               <span className="mx-1">•</span>
                               <Clock className="h-3 w-3" />
                               {appointment.start_time.substring(0, 5)} - {appointment.end_time.substring(0, 5)}
@@ -1051,35 +1065,54 @@ export default function AdminAgenda() {
 
                 {/* Time Grid */}
                 <div className="relative">
-                  {timeSlots.map((time) => (
+                  {timeSlots.map((time, timeIndex) => (
                     <div key={time} className="grid grid-cols-8 border-b min-h-[60px]">
                       <div className="p-2 text-xs text-muted-foreground text-right pr-3">
                         {time}
                       </div>
                       {(viewMode === 'week' ? weekDays : [currentDate]).map((day) => {
-                        const dayAppointments = getAppointmentsForDay(day).filter(a => {
-                          // Normalizar o formato do horário (remover segundos se houver)
+                        const dayAppointments = getAppointmentsForDay(day);
+                        
+                        // Filtrar agendamentos que começam neste horário
+                        const appointmentsStartingHere = dayAppointments.filter(a => {
                           const aptTime = a.start_time.includes(':') 
                             ? a.start_time.split(':').slice(0, 2).join(':')
                             : a.start_time;
-                          
-                          // Comparar exatamente
                           return aptTime === time;
                         });
+                        
                         return (
                           <div
                             key={`${day.toISOString()}-${time}`}
                             className="border-l p-1 relative"
                           >
-                            {dayAppointments.map((apt) => {
+                            {appointmentsStartingHere.map((apt) => {
                               const client = clients.find(c => c.id === apt.client_id);
-                              const service = services.find(s => s.id === apt.service_id);
+                              
+                              // Calcular duração em minutos
+                              const [startHour, startMin] = apt.start_time.split(':').map(Number);
+                              const [endHour, endMin] = apt.end_time.split(':').map(Number);
+                              const startMinutes = startHour * 60 + startMin;
+                              const endMinutes = endHour * 60 + endMin;
+                              const durationMinutes = endMinutes - startMinutes;
+                              
+                              // Calcular quantos slots de 30min o agendamento ocupa
+                              const slotsOccupied = Math.max(1, Math.ceil(durationMinutes / 30));
+                              
+                              // Calcular altura: cada slot tem 60px (min-h-[60px])
+                              const height = slotsOccupied * 60 - 8; // -8 para padding
+                              
+                              // Ajustar padding baseado na altura
+                              const padding = height < 50 ? 'p-1' : 'p-2';
+                              const isShort = height < 50;
+                              
                               return (
                                 <div
                                   key={apt.id}
                                   className={cn(
-                                    'absolute inset-x-1 p-2 rounded-lg text-xs cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md z-10',
-                                    'bg-primary-light border-l-4',
+                                    'absolute left-1 right-1 rounded-lg text-xs cursor-pointer transition-all hover:shadow-lg z-10',
+                                    'bg-primary-light border-l-4 flex flex-col overflow-hidden',
+                                    padding,
                                     apt.status === 'confirmed' && 'border-success',
                                     apt.status === 'pending' && 'border-warning',
                                     apt.status === 'completed' && 'border-info',
@@ -1087,32 +1120,47 @@ export default function AdminAgenda() {
                                     !apt.status && 'border-primary'
                                   )}
                                   style={{
-                                    top: '2px',
-                                    minHeight: '56px',
+                                    top: '4px',
+                                    height: `${height}px`,
+                                    minHeight: '40px',
                                   }}
                                   onClick={() => handleEdit(apt)}
                                 >
-                                  <div className="flex items-center gap-1 mb-1">
-                                    <div className={cn('h-2 w-2 rounded-full', getStatusColor(apt.status))} />
-                                    <span className="font-semibold truncate">{client?.name || 'Cliente'}</span>
+                                  <div className="flex-1 min-h-0 flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <div className={cn('h-1.5 w-1.5 rounded-full shrink-0', getStatusColor(apt.status))} />
+                                      <span className={cn(
+                                        'font-semibold truncate',
+                                        isShort && 'text-[10px]'
+                                      )}>
+                                        {client?.name || 'Cliente'}
+                                      </span>
+                                    </div>
+                                    {(() => {
+                                      const appointmentServiceIds = appointmentServicesMap[apt.id] || [apt.service_id];
+                                      const appointmentServices = appointmentServiceIds
+                                        .map(id => services.find(s => s.id === id))
+                                        .filter(Boolean);
+                                      const serviceNames = appointmentServices.map(s => s!.name);
+                                      
+                                      return (
+                                        <p className={cn(
+                                          'text-muted-foreground truncate font-medium',
+                                          isShort ? 'text-[9px]' : 'text-[11px]'
+                                        )}>
+                                          {serviceNames.length === 1 
+                                            ? serviceNames[0]
+                                            : `${serviceNames.length} serviços`
+                                          }
+                                        </p>
+                                      );
+                                    })()}
                                   </div>
-                                  {(() => {
-                                    const appointmentServiceIds = appointmentServicesMap[apt.id] || [apt.service_id];
-                                    const appointmentServices = appointmentServiceIds
-                                      .map(id => services.find(s => s.id === id))
-                                      .filter(Boolean);
-                                    const serviceNames = appointmentServices.map(s => s!.name);
-                                    
-                                    return (
-                                      <p className="text-muted-foreground truncate font-medium">
-                                        {serviceNames.length === 1 
-                                          ? serviceNames[0]
-                                          : `${serviceNames.length} serviços`
-                                        }
-                                      </p>
-                                    );
-                                  })()}
-                                  <p className="text-[10px] text-muted-foreground">{apt.start_time} - {apt.end_time}</p>
+                                  {!isShort && (
+                                    <p className="text-[10px] text-muted-foreground mt-auto pt-0.5">
+                                      {apt.start_time.substring(0, 5)} - {apt.end_time.substring(0, 5)}
+                                    </p>
+                                  )}
                                 </div>
                               );
                             })}
@@ -1265,7 +1313,12 @@ export default function AdminAgenda() {
                               <AvatarImage src={p.avatar} />
                               <AvatarFallback className="text-[10px]">{p.name.charAt(0)}</AvatarFallback>
                             </Avatar>
-                            {p.name}
+                            <span>{p.name}</span>
+                            {p.specialty && (
+                              <Badge variant="outline" className="text-[10px] ml-1">
+                                {p.specialty}
+                              </Badge>
+                            )}
                           </div>
                         </SelectItem>
                       ))}
@@ -1368,39 +1421,6 @@ export default function AdminAgenda() {
                       })}
                     </div>
                   </ScrollArea>
-                  {formData.service_ids.length > 0 && (
-                    <div className="p-3 bg-muted/50 rounded-lg space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Serviços selecionados:</span>
-                        <span className="font-semibold">{formData.service_ids.length}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Duração total:</span>
-                        <span className="font-semibold flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {selectedServicesInfo.totalDuration} min
-                          {selectedServicesInfo.totalDuration >= 60 && (
-                            <span className="text-muted-foreground font-normal">
-                              ({Math.floor(selectedServicesInfo.totalDuration / 60)}h {selectedServicesInfo.totalDuration % 60}min)
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Preço total:</span>
-                        <span className="font-semibold text-success flex items-center gap-1">
-                          <DollarSign className="h-3 w-3" />
-                          R$ {selectedServicesInfo.totalPrice.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm pt-2 border-t">
-                        <span className="text-muted-foreground">Horário de término:</span>
-                        <span className="font-semibold">
-                          {formData.start_time.substring(0, 5)} - {selectedServicesInfo.end_time.substring(0, 5)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
                   <Button
                     type="button"
                     variant="outline"
@@ -1450,6 +1470,41 @@ export default function AdminAgenda() {
                 rows={3}
               />
             </div>
+
+            {/* Card de informações dos serviços selecionados */}
+            {formData.service_ids.length > 0 && (
+              <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Serviços selecionados:</span>
+                  <span className="font-semibold">{formData.service_ids.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Duração total:</span>
+                  <span className="font-semibold flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {selectedServicesInfo.totalDuration} min
+                    {selectedServicesInfo.totalDuration >= 60 && (
+                      <span className="text-muted-foreground font-normal">
+                        ({Math.floor(selectedServicesInfo.totalDuration / 60)}h {selectedServicesInfo.totalDuration % 60}min)
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Preço total:</span>
+                  <span className="font-semibold text-success flex items-center gap-1">
+                    <DollarSign className="h-3 w-3" />
+                    R$ {selectedServicesInfo.totalPrice.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm pt-2 border-t">
+                  <span className="text-muted-foreground">Horário de término:</span>
+                  <span className="font-semibold">
+                    {formData.start_time.substring(0, 5)} - {selectedServicesInfo.end_time.substring(0, 5)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
           {editingAppointment && (
             <div className="mt-4 pt-4 border-t space-y-3">

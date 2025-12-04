@@ -24,3 +24,5 @@ WHERE u.id IS NULL;
 --   WHERE tenant_id IS NOT NULL
 -- );
 
+
+

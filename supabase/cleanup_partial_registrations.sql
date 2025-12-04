@@ -58,3 +58,5 @@ $$;
 GRANT EXECUTE ON FUNCTION cleanup_user_registration TO authenticated, anon;
 
 
+
+
