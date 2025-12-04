@@ -20,6 +20,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -60,6 +70,7 @@ export default function AdminAgenda() {
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
   const [hasReview, setHasReview] = useState(false);
   const [showListView, setShowListView] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
     client_id: '',
     professional_id: '',
@@ -703,8 +714,13 @@ export default function AdminAgenda() {
                                 <div
                                   key={apt.id}
                                   className={cn(
-                                    'absolute inset-x-1 p-2 rounded-lg text-xs cursor-pointer transition-all hover:scale-[1.02] z-10',
-                                    'bg-primary-light border-l-4 border-primary'
+                                    'absolute inset-x-1 p-2 rounded-lg text-xs cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md z-10',
+                                    'bg-primary-light border-l-4',
+                                    apt.status === 'confirmed' && 'border-success',
+                                    apt.status === 'pending' && 'border-warning',
+                                    apt.status === 'completed' && 'border-info',
+                                    apt.status === 'cancelled' && 'border-destructive',
+                                    !apt.status && 'border-primary'
                                   )}
                                   style={{
                                     top: '2px',
@@ -714,9 +730,9 @@ export default function AdminAgenda() {
                                 >
                                   <div className="flex items-center gap-1 mb-1">
                                     <div className={cn('h-2 w-2 rounded-full', getStatusColor(apt.status))} />
-                                    <span className="font-medium truncate">{client?.name || 'Cliente'}</span>
+                                    <span className="font-semibold truncate">{client?.name || 'Cliente'}</span>
                                   </div>
-                                  <p className="text-muted-foreground truncate">{service?.name || 'Serviço'}</p>
+                                  <p className="text-muted-foreground truncate font-medium">{service?.name || 'Serviço'}</p>
                                   <p className="text-[10px] text-muted-foreground">{apt.start_time} - {apt.end_time}</p>
                                 </div>
                               );
@@ -974,11 +990,12 @@ export default function AdminAgenda() {
             {editingAppointment && (
               <Button
                 variant="outline"
-                onClick={handleDelete}
+                onClick={() => setDeleteDialogOpen(true)}
                 disabled={deleteMutation.isPending}
+                className="text-destructive hover:text-destructive"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                {deleteMutation.isPending ? 'Removendo...' : 'Remover'}
+                Remover
               </Button>
             )}
             <Button
@@ -1000,6 +1017,30 @@ export default function AdminAgenda() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja remover este agendamento? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                handleDelete();
+                setDeleteDialogOpen(false);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

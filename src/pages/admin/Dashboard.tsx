@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { AdminHeader } from '@/components/layout/AdminHeader';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +10,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { dashboardService } from '@/services/dashboard.service';
 import { appointmentsService } from '@/services/appointments.service';
 import { professionalsService } from '@/services/professionals.service';
+import { servicesService } from '@/services/services.service';
 import { supabase } from '@/lib/supabase';
+import { cn } from '@/lib/utils';
 import {
   Calendar,
   DollarSign,
@@ -19,6 +22,10 @@ import {
   Star,
   ChevronRight,
   ArrowUpRight,
+  CheckCircle2,
+  Circle,
+  Building2,
+  Scissors,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -80,12 +87,24 @@ export default function AdminDashboard() {
               clientName: 'Cliente',
               serviceName: 'Serviço',
               professionalName: 'Profissional',
+              professionalAvatar: undefined,
             };
           }
         })
       );
       
-      return appointmentsWithDetails;
+      // Agrupar agendamentos duplicados no mesmo horário
+      const groupedAppointments = new Map<string, typeof appointmentsWithDetails>();
+      appointmentsWithDetails.forEach(apt => {
+        const key = `${apt.start_time}-${apt.professional_id}`;
+        if (!groupedAppointments.has(key)) {
+          groupedAppointments.set(key, []);
+        }
+        groupedAppointments.get(key)!.push(apt);
+      });
+      
+      // Retornar agendamentos agrupados (se houver múltiplos no mesmo horário, mostrar como grupo)
+      return Array.from(groupedAppointments.values()).flat();
     },
     enabled: !!tenant?.id,
   });
@@ -96,6 +115,34 @@ export default function AdminDashboard() {
     queryFn: () => professionalsService.getAll(tenant!.id),
     enabled: !!tenant?.id,
   });
+
+  // Buscar serviços para checklist de onboarding
+  const { data: services = [] } = useQuery({
+    queryKey: ['services', tenant?.id],
+    queryFn: () => servicesService.getAll(tenant!.id),
+    enabled: !!tenant?.id,
+  });
+
+  // Calcular progresso de onboarding
+  const onboardingProgress = useMemo(() => {
+    if (!tenant) return { completed: 0, total: 4, items: [] };
+    
+    const hasSalon = !!tenant.name;
+    const hasProfessionals = professionals.length > 0;
+    const hasServices = services.length > 0;
+    const hasWorkingHours = tenant.working_hours && Object.values(tenant.working_hours).some((day: any) => day?.open);
+    
+    const items = [
+      { id: 'salon', label: 'Cadastrar Salão', completed: hasSalon, link: '/admin/settings' },
+      { id: 'professionals', label: 'Adicionar Profissional', completed: hasProfessionals, link: '/admin/professionals' },
+      { id: 'services', label: 'Criar Serviço', completed: hasServices, link: '/admin/services' },
+      { id: 'hours', label: 'Definir Horários', completed: hasWorkingHours, link: '/admin/settings' },
+    ];
+    
+    const completed = items.filter(item => item.completed).length;
+    
+    return { completed, total: items.length, items };
+  }, [tenant, professionals, services]);
 
   if (statsLoading || appointmentsLoading) {
     return (
@@ -126,6 +173,62 @@ export default function AdminDashboard() {
       />
 
       <div className="p-6 space-y-6">
+        {/* Checklist de Onboarding */}
+        {onboardingProgress.completed < onboardingProgress.total && (
+          <Card className="border-primary/20 bg-primary-light/5">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Configuração Inicial
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-sm text-muted-foreground">
+                    Complete a configuração inicial para começar a usar o sistema
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-32 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full gradient-primary transition-all duration-300"
+                        style={{ width: `${(onboardingProgress.completed / onboardingProgress.total) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-semibold">
+                      {onboardingProgress.completed}/{onboardingProgress.total}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {onboardingProgress.items.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => navigate(item.link)}
+                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors text-left group"
+                    >
+                      {item.completed ? (
+                        <CheckCircle2 className="h-5 w-5 text-success shrink-0" />
+                      ) : (
+                        <Circle className="h-5 w-5 text-muted-foreground shrink-0" />
+                      )}
+                      <span className={cn(
+                        "text-sm flex-1",
+                        item.completed ? "text-muted-foreground line-through" : "font-medium"
+                      )}>
+                        {item.label}
+                      </span>
+                      {!item.completed && (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <StatCard
@@ -134,6 +237,7 @@ export default function AdminDashboard() {
             icon={<Calendar className="h-5 w-5" />}
             variant="primary"
             description={`${stats.todayConfirmed} confirmados`}
+            className="hover:shadow-lg transition-shadow duration-200"
           />
           <StatCard
             title="Faturamento Semanal"
@@ -173,38 +277,68 @@ export default function AdminDashboard() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {todayAppointments.slice(0, 5).map((appointment: any) => {
-                    return (
-                      <div
-                        key={appointment.id}
-                        className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
-                        onClick={() => navigate(`/admin/agenda?appointment=${appointment.id}`)}
-                      >
-                        <div className="flex items-center justify-center w-14 text-center">
-                          <span className="text-sm font-semibold">{appointment.start_time.substring(0, 5)}</span>
-                        </div>
-                        <div className="h-10 w-1 rounded-full gradient-primary" />
-                        <Avatar className="h-10 w-10">
-                          <AvatarImage src={appointment.professionalAvatar} />
-                          <AvatarFallback className="bg-primary-light text-primary text-xs">
-                            {appointment.professionalName?.charAt(0) || 'P'}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{appointment.clientName || 'Cliente'}</p>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {appointment.serviceName || 'Serviço'}
-                          </p>
-                        </div>
-                        <Badge variant={appointment.status === 'confirmed' ? 'soft-success' : appointment.status === 'pending' ? 'soft-warning' : appointment.status === 'cancelled' ? 'destructive' : 'default'}>
-                          {appointment.status === 'confirmed' && 'Confirmado'}
-                          {appointment.status === 'pending' && 'Pendente'}
-                          {appointment.status === 'cancelled' && 'Cancelado'}
-                          {appointment.status === 'completed' && 'Concluído'}
-                        </Badge>
-                      </div>
-                    );
-                  })}
+                  {(() => {
+                    // Agrupar agendamentos por horário e profissional para evitar duplicatas visuais
+                    const groupedByTime = new Map<string, typeof todayAppointments>();
+                    todayAppointments.forEach((apt: any) => {
+                      const key = `${apt.start_time.substring(0, 5)}-${apt.professional_id}`;
+                      if (!groupedByTime.has(key)) {
+                        groupedByTime.set(key, []);
+                      }
+                      groupedByTime.get(key)!.push(apt);
+                    });
+                    
+                    return Array.from(groupedByTime.entries())
+                      .slice(0, 5)
+                      .map(([key, apts]) => {
+                        const appointment = apts[0];
+                        const count = apts.length;
+                        const hasMultiple = count > 1;
+                        
+                        return (
+                          <div
+                            key={appointment.id}
+                            className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 hover:bg-muted hover:shadow-md transition-all cursor-pointer group"
+                            onClick={() => navigate(`/admin/agenda?appointment=${appointment.id}`)}
+                          >
+                            <div className="flex items-center justify-center w-14 text-center">
+                              <span className="text-sm font-semibold">{appointment.start_time.substring(0, 5)}</span>
+                              {hasMultiple && (
+                                <span className="text-xs text-muted-foreground block">({count}x)</span>
+                              )}
+                            </div>
+                            <div className={cn(
+                              "h-10 w-1 rounded-full",
+                              appointment.status === 'confirmed' && "bg-success",
+                              appointment.status === 'pending' && "bg-warning",
+                              appointment.status === 'completed' && "bg-info",
+                              appointment.status === 'cancelled' && "bg-destructive",
+                              !appointment.status && "gradient-primary"
+                            )} />
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={appointment.professionalAvatar} />
+                              <AvatarFallback className="bg-primary-light text-primary text-xs">
+                                {appointment.professionalName?.charAt(0) || 'P'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">
+                                {hasMultiple ? `${count} atendimentos` : appointment.clientName || 'Cliente'}
+                              </p>
+                              <p className="text-sm text-muted-foreground truncate">
+                                {hasMultiple ? appointment.professionalName : appointment.serviceName || 'Serviço'}
+                              </p>
+                            </div>
+                            <Badge variant={appointment.status === 'confirmed' ? 'soft-success' : appointment.status === 'pending' ? 'soft-warning' : appointment.status === 'cancelled' ? 'destructive' : appointment.status === 'completed' ? 'soft-info' : 'default'}>
+                              {appointment.status === 'confirmed' && 'Confirmado'}
+                              {appointment.status === 'pending' && 'Pendente'}
+                              {appointment.status === 'cancelled' && 'Cancelado'}
+                              {appointment.status === 'completed' && 'Concluído'}
+                            </Badge>
+                          </div>
+                        );
+                      });
+                  })()}
                 </div>
               )}
             </CardContent>
@@ -259,34 +393,48 @@ export default function AdminDashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.revenueByMonth}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis
-                      dataKey="month"
-                      className="text-xs fill-muted-foreground"
-                    />
-                    <YAxis
-                      className="text-xs fill-muted-foreground"
-                      tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--card))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                      }}
-                      formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Faturamento']}
-                    />
-                    <Bar
-                      dataKey="revenue"
-                      fill="hsl(var(--primary))"
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              {!stats.revenueByMonth || stats.revenueByMonth.length === 0 || stats.revenueByMonth.every((m: any) => !m.revenue || m.revenue === 0) ? (
+                <div className="h-[300px] flex flex-col items-center justify-center text-center p-8">
+                  <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                    <DollarSign className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <p className="text-lg font-semibold mb-2">Comece a faturar para ver o gráfico crescer</p>
+                  <p className="text-sm text-muted-foreground">
+                    Quando você registrar transações e agendamentos concluídos, os dados aparecerão aqui.
+                  </p>
+                </div>
+              ) : (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.revenueByMonth}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border opacity-30" />
+                      <XAxis
+                        dataKey="month"
+                        className="text-xs fill-muted-foreground"
+                        tick={{ fontSize: 12 }}
+                      />
+                      <YAxis
+                        className="text-xs fill-muted-foreground"
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--card))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Faturamento']}
+                      />
+                      <Bar
+                        dataKey="revenue"
+                        fill="hsl(var(--primary))"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </CardContent>
           </Card>
 
