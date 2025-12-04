@@ -39,7 +39,7 @@ import { professionalsService } from '@/services/professionals.service';
 import { servicesService } from '@/services/services.service';
 import { clientsService } from '@/services/clients.service';
 import { reviewsService } from '@/services/reviews.service';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid, UserPlus, Mail, Phone } from 'lucide-react';
 import { format, addDays, startOfWeek, addWeeks, subWeeks, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -71,6 +71,12 @@ export default function AdminAgenda() {
   const [hasReview, setHasReview] = useState(false);
   const [showListView, setShowListView] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [newClientData, setNewClientData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+  });
   const [formData, setFormData] = useState({
     client_id: '',
     professional_id: '',
@@ -116,10 +122,37 @@ export default function AdminAgenda() {
   });
 
   // Buscar clientes
-  const { data: clients = [] } = useQuery({
+  const { data: clients = [], refetch: refetchClients } = useQuery({
     queryKey: ['clients', tenant?.id],
     queryFn: () => clientsService.getAll(tenant!.id),
     enabled: !!tenant?.id,
+  });
+
+  // Criar cliente rapidamente
+  const createClientMutation = useMutation({
+    mutationFn: (data: typeof newClientData) =>
+      clientsService.create(tenant!.id, {
+        name: data.name,
+        email: data.email,
+        phone: data.phone || undefined,
+      }),
+    onSuccess: async (newClient) => {
+      await refetchClients();
+      setFormData({ ...formData, client_id: newClient.id });
+      setIsClientModalOpen(false);
+      setNewClientData({ name: '', email: '', phone: '' });
+      toast({
+        title: 'Cliente cadastrado!',
+        description: `${newClient.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar cliente',
+        description: error.message || 'Ocorreu um erro ao cadastrar o cliente.',
+        variant: 'destructive',
+      });
+    },
   });
 
   // Buscar agendamentos
@@ -797,25 +830,56 @@ export default function AdminAgenda() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Cliente *</Label>
-              <Select
-                value={formData.client_id}
-                onValueChange={(v) => setFormData({ ...formData, client_id: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map(c => (
-                    <SelectItem key={c.id} value={c.id}>
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4" />
-                        {c.name}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between">
+                <Label>Cliente *</Label>
+                {clients.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum cliente cadastrado</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Select
+                  value={formData.client_id}
+                  onValueChange={(v) => {
+                    if (v === 'new-client') {
+                      setIsClientModalOpen(true);
+                    } else {
+                      setFormData({ ...formData, client_id: v });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder={clients.length === 0 ? "Cadastre um cliente primeiro" : "Selecione o cliente"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.length === 0 ? (
+                      <SelectItem value="new-client" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <UserPlus className="h-4 w-4" />
+                          Cadastrar novo cliente
+                        </div>
+                      </SelectItem>
+                    ) : (
+                      <>
+                        {clients.map(c => (
+                          <SelectItem key={c.id} value={c.id}>
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4" />
+                              {c.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                        <div className="border-t my-1" />
+                        <SelectItem value="new-client" className="text-primary font-medium">
+                          <div className="flex items-center gap-2">
+                            <UserPlus className="h-4 w-4" />
+                            Cadastrar novo cliente
+                          </div>
+                        </SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1041,6 +1105,90 @@ export default function AdminAgenda() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Modal de Cadastro Rápido de Cliente */}
+      <Dialog open={isClientModalOpen} onOpenChange={setIsClientModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-primary" />
+              Cadastrar Novo Cliente
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do cliente para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Nome completo"
+                  className="pl-10"
+                  value={newClientData.name}
+                  onChange={(e) => setNewClientData({ ...newClientData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Email *</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="email"
+                  placeholder="email@exemplo.com"
+                  className="pl-10"
+                  value={newClientData.email}
+                  onChange={(e) => setNewClientData({ ...newClientData, email: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="tel"
+                  placeholder="(11) 99999-9999"
+                  className="pl-10"
+                  value={newClientData.phone}
+                  onChange={(e) => setNewClientData({ ...newClientData, phone: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsClientModalOpen(false);
+                setNewClientData({ name: '', email: '', phone: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newClientData.name || !newClientData.email) {
+                  toast({
+                    title: 'Campos obrigatórios',
+                    description: 'Nome e email são obrigatórios.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createClientMutation.mutate(newClientData);
+              }}
+              disabled={createClientMutation.isPending || !newClientData.name || !newClientData.email}
+            >
+              {createClientMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
