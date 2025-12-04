@@ -239,6 +239,49 @@ export default function AdminAgenda() {
     enabled: !!tenant?.id,
   });
 
+  // Função para verificar conflitos de horário
+  const checkTimeConflict = (
+    professionalId: string,
+    date: string,
+    startTime: string,
+    endTime: string,
+    excludeAppointmentId?: string
+  ): Appointment | null => {
+    // Buscar agendamentos do mesmo profissional na mesma data
+    const sameDayAppointments = appointments.filter(apt => {
+      const aptDate = typeof apt.date === 'string' ? apt.date.split('T')[0] : format(new Date(apt.date), 'yyyy-MM-dd');
+      return (
+        apt.professional_id === professionalId &&
+        aptDate === date &&
+        apt.status !== 'cancelled' &&
+        apt.id !== excludeAppointmentId
+      );
+    });
+
+    // Converter horários para minutos para facilitar comparação
+    const timeToMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+
+    const newStart = timeToMinutes(startTime);
+    const newEnd = timeToMinutes(endTime);
+
+    // Verificar sobreposição
+    for (const apt of sameDayAppointments) {
+      const aptStart = timeToMinutes(apt.start_time);
+      const aptEnd = timeToMinutes(apt.end_time);
+
+      // Verificar se há sobreposição: novo agendamento começa antes do atual terminar
+      // E novo agendamento termina depois do atual começar
+      if (newStart < aptEnd && newEnd > aptStart) {
+        return apt;
+      }
+    }
+
+    return null;
+  };
+
   // Criar agendamento
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
@@ -251,6 +294,24 @@ export default function AdminAgenda() {
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+
+      // Verificar conflito de horário
+      const conflict = checkTimeConflict(
+        data.professional_id,
+        data.date,
+        data.start_time,
+        end_time
+      );
+
+      if (conflict) {
+        const conflictClient = clients.find(c => c.id === conflict.client_id);
+        const conflictService = services.find(s => s.id === conflict.service_id);
+        throw new Error(
+          `Este profissional já tem um agendamento neste horário: ${conflict.start_time.substring(0, 5)} - ${conflict.end_time.substring(0, 5)} ` +
+          `com ${conflictClient?.name || 'cliente'} (${conflictService?.name || 'serviço'}). ` +
+          `Escolha outro horário ou profissional.`
+        );
+      }
 
       return appointmentsService.create(tenant!.id, {
         client_id: data.client_id,
@@ -504,6 +565,28 @@ export default function AdminAgenda() {
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+
+      // Verificar conflito de horário (excluindo o próprio agendamento sendo editado)
+      const conflict = checkTimeConflict(
+        formData.professional_id,
+        formData.date,
+        formData.start_time,
+        end_time,
+        editingAppointment.id
+      );
+
+      if (conflict) {
+        const conflictClient = clients.find(c => c.id === conflict.client_id);
+        const conflictService = services.find(s => s.id === conflict.service_id);
+        toast({
+          title: 'Conflito de horário',
+          description: `Este profissional já tem um agendamento neste horário: ${conflict.start_time.substring(0, 5)} - ${conflict.end_time.substring(0, 5)} ` +
+            `com ${conflictClient?.name || 'cliente'} (${conflictService?.name || 'serviço'}). ` +
+            `Escolha outro horário ou profissional.`,
+          variant: 'destructive',
+        });
+        return;
+      }
 
       updateMutation.mutate({
         id: editingAppointment.id,
