@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Sparkles, Mail, ArrowLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ThemeToggleSimple } from '@/components/ui/theme-toggle';
 
 export default function ForgotPassword() {
   const { toast } = useToast();
@@ -35,12 +36,15 @@ export default function ForgotPassword() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-md"
       >
-        <Link to="/" className="flex items-center justify-center gap-2 mb-8">
-          <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
-            <Sparkles className="h-5 w-5 text-primary-foreground" />
-          </div>
-          <span className="font-display font-bold text-xl">BeautySaaS</span>
-        </Link>
+        <div className="flex items-center justify-between mb-8">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
+              <Sparkles className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <span className="font-display font-bold text-xl">BeautySaaS</span>
+          </Link>
+          <ThemeToggleSimple />
+        </div>
 
         <Card>
           {!sent ? (

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Sparkles, Mail, Lock, User, Building2, Phone, ArrowRight, ArrowLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ThemeToggleSimple } from '@/components/ui/theme-toggle';
 import { pricingPlans } from '@/data/mockData';
 import { cn } from '@/lib/utils';
 
@@ -55,6 +56,43 @@ export default function Register() {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     }
+  };
+
+  // Função para traduzir mensagens de erro do Supabase
+  const getErrorMessage = (error: any): string => {
+    const errorMessage = error?.message || '';
+    const errorCode = error?.code || '';
+
+    // Traduzir mensagens comuns do Supabase
+    if (errorMessage.includes('User already registered') || 
+        errorMessage.includes('already registered') ||
+        errorMessage.includes('already exists') ||
+        errorMessage.includes('already has a tenant')) {
+      return 'Este email já está cadastrado. Faça login ao invés de criar uma nova conta.';
+    }
+
+    if (errorMessage.includes('Password should be at least')) {
+      return 'A senha deve ter pelo menos 6 caracteres.';
+    }
+
+    if (errorMessage.includes('Invalid email')) {
+      return 'Email inválido. Verifique o formato do email e tente novamente.';
+    }
+
+    if (errorMessage.includes('Too many requests') || errorCode === 'too_many_requests') {
+      return 'Muitas tentativas. Aguarde alguns minutos e tente novamente.';
+    }
+
+    if (errorMessage.includes('Network') || errorMessage.includes('Failed to fetch')) {
+      return 'Erro de conexão. Verifique sua internet e tente novamente.';
+    }
+
+    if (errorMessage.includes('function') || errorMessage.includes('does not exist')) {
+      return 'Erro no servidor. Entre em contato com o suporte.';
+    }
+
+    // Se não for uma mensagem conhecida, usar mensagem genérica amigável
+    return 'Não foi possível criar sua conta. Verifique os dados e tente novamente.';
   };
 
   const handleSubmit = async () => {
@@ -106,9 +144,10 @@ export default function Register() {
       setSignUpSuccess(true);
       // O redirecionamento será feito pelo useEffect quando o profile carregar
     } catch (error: any) {
+      const friendlyMessage = getErrorMessage(error);
       toast({
-        title: 'Erro ao criar conta',
-        description: error.message || 'Ocorreu um erro. Tente novamente.',
+        title: 'Não foi possível criar sua conta',
+        description: friendlyMessage,
         variant: 'destructive',
       });
     } finally {
@@ -137,12 +176,15 @@ export default function Register() {
     <div className="min-h-screen flex">
       {/* Left side - Form */}
       <div className="flex-1 flex flex-col p-8">
-        <Link to="/" className="flex items-center gap-2 mb-8">
-          <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
-            <Sparkles className="h-5 w-5 text-primary-foreground" />
-          </div>
-          <span className="font-display font-bold text-xl">BeautySaaS</span>
-        </Link>
+        <div className="flex items-center justify-between mb-8">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
+              <Sparkles className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <span className="font-display font-bold text-xl">BeautySaaS</span>
+          </Link>
+          <ThemeToggleSimple />
+        </div>
 
         {/* Steps indicator */}
         <div className="max-w-2xl mx-auto w-full mb-8">

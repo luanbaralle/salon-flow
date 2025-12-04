@@ -95,3 +95,5 @@ $$;
 GRANT EXECUTE ON FUNCTION create_tenant_and_user TO authenticated, anon;
 
 
+
+

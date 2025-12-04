@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sparkles, Mail, Lock, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ThemeToggleSimple } from '@/components/ui/theme-toggle';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -37,6 +38,38 @@ export default function Login() {
     }
   }, [isAuthenticated, profile, navigate, location]);
 
+  // Função para traduzir mensagens de erro do Supabase
+  const getErrorMessage = (error: any): string => {
+    const errorMessage = error?.message || '';
+    const errorCode = error?.code || '';
+
+    // Traduzir mensagens comuns do Supabase
+    if (errorMessage.includes('Invalid login credentials') || 
+        errorMessage.includes('Invalid credentials') ||
+        errorCode === 'invalid_credentials') {
+      return 'Email ou senha incorretos. Verifique suas credenciais e tente novamente.';
+    }
+
+    if (errorMessage.includes('Email not confirmed')) {
+      return 'Por favor, confirme seu email antes de fazer login. Verifique sua caixa de entrada.';
+    }
+
+    if (errorMessage.includes('Too many requests') || errorCode === 'too_many_requests') {
+      return 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.';
+    }
+
+    if (errorMessage.includes('User not found')) {
+      return 'Nenhuma conta encontrada com este email. Verifique o email ou crie uma conta.';
+    }
+
+    if (errorMessage.includes('Network') || errorMessage.includes('Failed to fetch')) {
+      return 'Erro de conexão. Verifique sua internet e tente novamente.';
+    }
+
+    // Se não for uma mensagem conhecida, usar mensagem genérica amigável
+    return 'Não foi possível fazer login. Verifique seu email e senha e tente novamente.';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -51,9 +84,10 @@ export default function Login() {
 
       // O redirecionamento será feito pelo useEffect quando o profile carregar
     } catch (error: any) {
+      const friendlyMessage = getErrorMessage(error);
       toast({
-        title: 'Erro ao fazer login',
-        description: error.message || 'Email ou senha incorretos',
+        title: 'Não foi possível fazer login',
+        description: friendlyMessage,
         variant: 'destructive',
       });
       setLoading(false);
@@ -69,12 +103,15 @@ export default function Login() {
           animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-md"
         >
-          <Link to="/" className="flex items-center gap-2 mb-8">
-            <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-display font-bold text-xl">BeautySaaS</span>
-          </Link>
+          <div className="flex items-center justify-between mb-8">
+            <Link to="/" className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <span className="font-display font-bold text-xl">BeautySaaS</span>
+            </Link>
+            <ThemeToggleSimple />
+          </div>
 
           <Card>
             <CardHeader>

@@ -12,7 +12,8 @@ interface StatCardProps {
     isPositive: boolean;
   };
   description?: string;
-  variant?: 'default' | 'primary' | 'success' | 'warning' | 'info';
+  variant?: 'default' | 'primary' | 'success' | 'warning' | 'info' | 'destructive';
+  className?: string;
 }
 
 const variantStyles = {
@@ -31,11 +32,14 @@ const variantStyles = {
   info: {
     icon: 'bg-info-light text-info',
   },
+  destructive: {
+    icon: 'bg-destructive/10 text-destructive',
+  },
 };
 
-export function StatCard({ title, value, icon, trend, description, variant = 'default' }: StatCardProps) {
+export function StatCard({ title, value, icon, trend, description, variant = 'default', className }: StatCardProps) {
   return (
-    <Card variant="stat" className="relative overflow-hidden">
+    <Card variant="stat" className={cn("relative overflow-hidden transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5", className)}>
       <CardContent className="p-6">
         <div className="flex items-start justify-between">
           <div className="space-y-2">
@@ -62,7 +66,7 @@ export function StatCard({ title, value, icon, trend, description, variant = 'de
               <p className="text-xs text-muted-foreground">{description}</p>
             )}
           </div>
-          <div className={cn('p-3 rounded-xl', variantStyles[variant].icon)}>
+          <div className={cn('p-3 rounded-xl transition-transform duration-200 group-hover:scale-110', variantStyles[variant].icon)}>
             {icon}
           </div>
         </div>
@@ -74,6 +78,7 @@ export function StatCard({ title, value, icon, trend, description, variant = 'de
         variant === 'success' && 'bg-success',
         variant === 'warning' && 'bg-warning',
         variant === 'info' && 'bg-info',
+        variant === 'destructive' && 'bg-destructive',
         variant === 'default' && 'bg-muted'
       )} />
     </Card>

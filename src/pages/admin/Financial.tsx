@@ -20,6 +20,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -38,6 +48,8 @@ export default function AdminFinancial() {
   const [filterType, setFilterType] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     type: 'expense' as 'income' | 'expense',
     category: '',
@@ -203,7 +215,7 @@ export default function AdminFinancial() {
             title="Despesas Mensais"
             value={`R$ ${(stats?.monthExpenses || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             icon={<TrendingDown className="h-5 w-5" />}
-            variant="warning"
+            variant="destructive"
           />
         </div>
 
@@ -271,9 +283,8 @@ export default function AdminFinancial() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          if (confirm('Tem certeza que deseja remover esta transação?')) {
-                            deleteMutation.mutate(t.id);
-                          }
+                          setTransactionToDelete(t.id);
+                          setDeleteDialogOpen(true);
                         }}
                         disabled={deleteMutation.isPending}
                       >
@@ -368,6 +379,33 @@ export default function AdminFinancial() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja remover esta transação? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (transactionToDelete) {
+                  deleteMutation.mutate(transactionToDelete);
+                  setTransactionToDelete(null);
+                  setDeleteDialogOpen(false);
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

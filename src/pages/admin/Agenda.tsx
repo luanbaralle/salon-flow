@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { AdminHeader } from '@/components/layout/AdminHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,16 +21,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { appointmentsService, type Appointment } from '@/services/appointments.service';
 import { professionalsService } from '@/services/professionals.service';
 import { servicesService } from '@/services/services.service';
 import { clientsService } from '@/services/clients.service';
 import { reviewsService } from '@/services/reviews.service';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid, UserPlus, Mail, Phone, Briefcase, DollarSign, Tag } from 'lucide-react';
 import { format, addDays, startOfWeek, addWeeks, subWeeks, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -50,6 +63,8 @@ export default function AdminAgenda() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedProfessional, setSelectedProfessional] = useState<string>('all');
@@ -60,10 +75,29 @@ export default function AdminAgenda() {
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
   const [hasReview, setHasReview] = useState(false);
   const [showListView, setShowListView] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isProfessionalModalOpen, setIsProfessionalModalOpen] = useState(false);
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [newClientData, setNewClientData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+  });
+  const [newProfessionalData, setNewProfessionalData] = useState({
+    name: '',
+    specialty: '',
+  });
+  const [newServiceData, setNewServiceData] = useState({
+    name: '',
+    duration: 60,
+    price: 0,
+    category: '',
+  });
   const [formData, setFormData] = useState({
     client_id: '',
     professional_id: '',
-    service_id: '',
+    service_ids: [] as string[],
     date: format(new Date(), 'yyyy-MM-dd'),
     start_time: '09:00',
     notes: '',
@@ -91,24 +125,111 @@ export default function AdminAgenda() {
   }, [viewMode, weekStart, currentDate]);
 
   // Buscar profissionais
-  const { data: professionals = [] } = useQuery({
+  const { data: professionals = [], refetch: refetchProfessionals } = useQuery({
     queryKey: ['professionals', tenant?.id],
     queryFn: () => professionalsService.getAll(tenant!.id),
     enabled: !!tenant?.id,
   });
 
   // Buscar serviços
-  const { data: services = [] } = useQuery({
+  const { data: services = [], refetch: refetchServices } = useQuery({
     queryKey: ['services', tenant?.id],
     queryFn: () => servicesService.getAll(tenant!.id),
     enabled: !!tenant?.id,
   });
 
+  // Obter categorias únicas dos serviços existentes
+  const serviceCategories = useMemo(() => {
+    return [...new Set(services.map(s => s.category))];
+  }, [services]);
+
   // Buscar clientes
-  const { data: clients = [] } = useQuery({
+  const { data: clients = [], refetch: refetchClients } = useQuery({
     queryKey: ['clients', tenant?.id],
     queryFn: () => clientsService.getAll(tenant!.id),
     enabled: !!tenant?.id,
+  });
+
+  // Criar cliente rapidamente
+  const createClientMutation = useMutation({
+    mutationFn: (data: typeof newClientData) =>
+      clientsService.create(tenant!.id, {
+        name: data.name,
+        email: data.email,
+        phone: data.phone || undefined,
+      }),
+    onSuccess: async (newClient) => {
+      await refetchClients();
+      setFormData({ ...formData, client_id: newClient.id });
+      setIsClientModalOpen(false);
+      setNewClientData({ name: '', email: '', phone: '' });
+      toast({
+        title: 'Cliente cadastrado!',
+        description: `${newClient.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar cliente',
+        description: error.message || 'Ocorreu um erro ao cadastrar o cliente.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Criar profissional rapidamente
+  const createProfessionalMutation = useMutation({
+    mutationFn: (data: typeof newProfessionalData) =>
+      professionalsService.create(tenant!.id, {
+        name: data.name,
+        specialty: data.specialty || undefined,
+        commission: 40,
+      }),
+    onSuccess: async (newProfessional) => {
+      await refetchProfessionals();
+      setFormData({ ...formData, professional_id: newProfessional.id });
+      setIsProfessionalModalOpen(false);
+      setNewProfessionalData({ name: '', specialty: '' });
+      toast({
+        title: 'Profissional cadastrado!',
+        description: `${newProfessional.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar profissional',
+        description: error.message || 'Ocorreu um erro ao cadastrar o profissional.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Criar serviço rapidamente
+  const createServiceMutation = useMutation({
+    mutationFn: (data: typeof newServiceData) =>
+      servicesService.create(tenant!.id, {
+        name: data.name,
+        duration: data.duration,
+        price: data.price,
+        category: data.category || 'Geral',
+      }),
+    onSuccess: async (newService) => {
+      await refetchServices();
+      setFormData({ ...formData, service_ids: [...formData.service_ids, newService.id] });
+      setIsServiceModalOpen(false);
+      setNewServiceData({ name: '', duration: 60, price: 0, category: '' });
+      toast({
+        title: 'Serviço cadastrado!',
+        description: `${newService.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar serviço',
+        description: error.message || 'Ocorreu um erro ao cadastrar o serviço.',
+        variant: 'destructive',
+      });
+    },
   });
 
   // Buscar agendamentos
@@ -123,30 +244,171 @@ export default function AdminAgenda() {
     enabled: !!tenant?.id,
   });
 
+  // Buscar serviços adicionais de todos os agendamentos
+  const { data: appointmentServicesMap = {} } = useQuery({
+    queryKey: ['appointment-services', appointments.map(a => a.id).join(',')],
+    queryFn: async () => {
+      if (appointments.length === 0) return {};
+      
+      const appointmentIds = appointments.map(a => a.id);
+      const { data } = await supabase
+        .from('appointment_services')
+        .select('appointment_id, service_id')
+        .in('appointment_id', appointmentIds);
+      
+      const map: Record<string, string[]> = {};
+      appointments.forEach(apt => {
+        map[apt.id] = [apt.service_id];
+      });
+      
+      data?.forEach((as: any) => {
+        if (!map[as.appointment_id]) {
+          map[as.appointment_id] = [];
+        }
+        if (!map[as.appointment_id].includes(as.service_id)) {
+          map[as.appointment_id].push(as.service_id);
+        }
+      });
+      
+      return map;
+    },
+    enabled: appointments.length > 0,
+  });
+
+  // Função para verificar conflitos de horário
+  const checkTimeConflict = (
+    professionalId: string,
+    date: string,
+    startTime: string,
+    endTime: string,
+    excludeAppointmentId?: string
+  ): Appointment | null => {
+    // Buscar agendamentos do mesmo profissional na mesma data
+    const sameDayAppointments = appointments.filter(apt => {
+      const aptDate = typeof apt.date === 'string' ? apt.date.split('T')[0] : format(new Date(apt.date), 'yyyy-MM-dd');
+      return (
+        apt.professional_id === professionalId &&
+        aptDate === date &&
+        apt.status !== 'cancelled' &&
+        apt.id !== excludeAppointmentId
+      );
+    });
+
+    // Converter horários para minutos para facilitar comparação
+    const timeToMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+
+    const newStart = timeToMinutes(startTime);
+    const newEnd = timeToMinutes(endTime);
+
+    // Verificar sobreposição
+    for (const apt of sameDayAppointments) {
+      const aptStart = timeToMinutes(apt.start_time);
+      const aptEnd = timeToMinutes(apt.end_time);
+
+      // Verificar se há sobreposição: novo agendamento começa antes do atual terminar
+      // E novo agendamento termina depois do atual começar
+      if (newStart < aptEnd && newEnd > aptStart) {
+        return apt;
+      }
+    }
+
+    return null;
+  };
+
+  // Calcular duração e preço total dos serviços selecionados
+  const selectedServicesInfo = useMemo(() => {
+    const selectedServices = services.filter(s => formData.service_ids.includes(s.id));
+    const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration, 0);
+    const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
+    
+    // Calcular end_time baseado na duração total
+    const [startHour, startMinute] = formData.start_time.split(':').map(Number);
+    const totalMinutes = startHour * 60 + startMinute + totalDuration;
+    const endHour = Math.floor(totalMinutes / 60);
+    const endMinute = totalMinutes % 60;
+    const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    return {
+      services: selectedServices,
+      totalDuration,
+      totalPrice,
+      end_time,
+    };
+  }, [formData.service_ids, formData.start_time, services]);
+
   // Criar agendamento
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
-      const service = services.find(s => s.id === data.service_id);
-      if (!service) throw new Error('Serviço não encontrado');
+      if (data.service_ids.length === 0) {
+        throw new Error('Selecione pelo menos um serviço');
+      }
 
-      // Calcular end_time baseado na duração do serviço
+      // Usar o primeiro serviço como principal (para compatibilidade com schema atual)
+      const primaryService = services.find(s => s.id === data.service_ids[0]);
+      if (!primaryService) throw new Error('Serviço não encontrado');
+
+      // Calcular end_time baseado na duração total dos serviços
+      const totalDuration = services
+        .filter(s => data.service_ids.includes(s.id))
+        .reduce((sum, s) => sum + s.duration, 0);
+      
       const [startHour, startMinute] = data.start_time.split(':').map(Number);
-      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const totalMinutes = startHour * 60 + startMinute + totalDuration;
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
 
-      return appointmentsService.create(tenant!.id, {
+      // Calcular preço total
+      const totalPrice = services
+        .filter(s => data.service_ids.includes(s.id))
+        .reduce((sum, s) => sum + s.price, 0);
+
+      // Verificar conflito de horário
+      const conflict = checkTimeConflict(
+        data.professional_id,
+        data.date,
+        data.start_time,
+        end_time
+      );
+
+      if (conflict) {
+        const conflictClient = clients.find(c => c.id === conflict.client_id);
+        const conflictService = services.find(s => s.id === conflict.service_id);
+        throw new Error(
+          `Este profissional já tem um agendamento neste horário: ${conflict.start_time.substring(0, 5)} - ${conflict.end_time.substring(0, 5)} ` +
+          `com ${conflictClient?.name || 'cliente'} (${conflictService?.name || 'serviço'}). ` +
+          `Escolha outro horário ou profissional.`
+        );
+      }
+
+      // Criar agendamento com primeiro serviço como principal
+      const appointment = await appointmentsService.create(tenant!.id, {
         client_id: data.client_id,
         professional_id: data.professional_id,
-        service_id: data.service_id,
+        service_id: data.service_ids[0], // Primeiro serviço como principal
         date: data.date,
         start_time: data.start_time,
         end_time,
-        price: service.price,
+        price: totalPrice,
         notes: data.notes || undefined,
         status: 'pending',
       });
+
+      // Adicionar serviços adicionais na tabela de relacionamento
+      if (data.service_ids.length > 1) {
+        const additionalServices = data.service_ids.slice(1);
+        for (const serviceId of additionalServices) {
+          await supabase.from('appointment_services').insert({
+            appointment_id: appointment.id,
+            service_id: serviceId,
+          });
+        }
+      }
+
+      return appointment;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
@@ -154,7 +416,7 @@ export default function AdminAgenda() {
       setFormData({
         client_id: '',
         professional_id: '',
-        service_id: '',
+        service_ids: [],
         date: format(new Date(), 'yyyy-MM-dd'),
         start_time: '09:00',
         notes: '',
@@ -323,6 +585,25 @@ export default function AdminAgenda() {
     setIsModalOpen(true);
   };
 
+  // Abrir modal automaticamente quando vier de redirecionamento com ?new=true
+  useEffect(() => {
+    const shouldOpenNew = searchParams.get('new') === 'true';
+    const appointmentId = searchParams.get('appointment');
+    
+    if (shouldOpenNew && !isModalOpen && !editingAppointment) {
+      setIsModalOpen(true);
+      // Remover parâmetro da URL após abrir o modal
+      setSearchParams({}, { replace: true });
+    } else if (appointmentId && !editingAppointment) {
+      // Se houver appointment ID na URL, buscar e editar
+      const appointment = appointments.find(a => a.id === appointmentId);
+      if (appointment) {
+        handleEdit(appointment);
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, isModalOpen, editingAppointment, appointments]);
+
   // Verificar se agendamento já foi avaliado
   useEffect(() => {
     if (editingAppointment && editingAppointment.status === 'completed') {
@@ -347,14 +628,41 @@ export default function AdminAgenda() {
         ? editingAppointment.date.split('T')[0]
         : editingAppointment.date;
       
-      setFormData({
-        client_id: editingAppointment.client_id,
-        professional_id: editingAppointment.professional_id,
-        service_id: editingAppointment.service_id,
-        date: normalizedDate,
-        start_time: normalizedTime,
-        notes: editingAppointment.notes || '',
-      });
+      // Buscar serviços adicionais do agendamento
+      const fetchAdditionalServices = async () => {
+        try {
+          const { data: additionalServices } = await supabase
+            .from('appointment_services')
+            .select('service_id')
+            .eq('appointment_id', editingAppointment.id);
+          
+          const allServiceIds = [
+            editingAppointment.service_id,
+            ...(additionalServices?.map((as: any) => as.service_id) || [])
+          ];
+          
+          setFormData({
+            client_id: editingAppointment.client_id,
+            professional_id: editingAppointment.professional_id,
+            service_ids: allServiceIds,
+            date: normalizedDate,
+            start_time: normalizedTime,
+            notes: editingAppointment.notes || '',
+          });
+        } catch {
+          // Se não houver serviços adicionais, usar apenas o principal
+          setFormData({
+            client_id: editingAppointment.client_id,
+            professional_id: editingAppointment.professional_id,
+            service_ids: [editingAppointment.service_id],
+            date: normalizedDate,
+            start_time: normalizedTime,
+            notes: editingAppointment.notes || '',
+          });
+        }
+      };
+      
+      fetchAdditionalServices();
     }
   }, [editingAppointment]);
 
@@ -377,31 +685,83 @@ export default function AdminAgenda() {
     }
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (editingAppointment) {
-      const service = services.find(s => s.id === formData.service_id);
-      if (!service) return;
+      if (formData.service_ids.length === 0) {
+        toast({
+          title: 'Serviço obrigatório',
+          description: 'Selecione pelo menos um serviço.',
+          variant: 'destructive',
+        });
+        return;
+      }
 
-      // Recalcular end_time se necessário
+      // Calcular duração total e preço total
+      const selectedServices = services.filter(s => formData.service_ids.includes(s.id));
+      const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration, 0);
+      const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
+
+      // Recalcular end_time baseado na duração total
       const [startHour, startMinute] = formData.start_time.split(':').map(Number);
-      const totalMinutes = startHour * 60 + startMinute + service.duration;
+      const totalMinutes = startHour * 60 + startMinute + totalDuration;
       const endHour = Math.floor(totalMinutes / 60);
       const endMinute = totalMinutes % 60;
       const end_time = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
 
-      updateMutation.mutate({
+      // Verificar conflito de horário (excluindo o próprio agendamento sendo editado)
+      const conflict = checkTimeConflict(
+        formData.professional_id,
+        formData.date,
+        formData.start_time,
+        end_time,
+        editingAppointment.id
+      );
+
+      if (conflict) {
+        const conflictClient = clients.find(c => c.id === conflict.client_id);
+        const conflictService = services.find(s => s.id === conflict.service_id);
+        toast({
+          title: 'Conflito de horário',
+          description: `Este profissional já tem um agendamento neste horário: ${conflict.start_time.substring(0, 5)} - ${conflict.end_time.substring(0, 5)} ` +
+            `com ${conflictClient?.name || 'cliente'} (${conflictService?.name || 'serviço'}). ` +
+            `Escolha outro horário ou profissional.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Atualizar agendamento principal
+      await updateMutation.mutateAsync({
         id: editingAppointment.id,
         updates: {
           client_id: formData.client_id,
           professional_id: formData.professional_id,
-          service_id: formData.service_id,
+          service_id: formData.service_ids[0], // Primeiro serviço como principal
           date: formData.date,
           start_time: formData.start_time,
           end_time,
-          price: service.price,
+          price: totalPrice,
           notes: formData.notes || undefined,
         },
       });
+
+      // Atualizar serviços adicionais
+      // Remover serviços antigos
+      await supabase
+        .from('appointment_services')
+        .delete()
+        .eq('appointment_id', editingAppointment.id);
+
+      // Adicionar novos serviços adicionais (exceto o primeiro que já está no appointment principal)
+      if (formData.service_ids.length > 1) {
+        const additionalServices = formData.service_ids.slice(1);
+        for (const serviceId of additionalServices) {
+          await supabase.from('appointment_services').insert({
+            appointment_id: editingAppointment.id,
+            service_id: serviceId,
+          });
+        }
+      }
     }
   };
 
@@ -462,7 +822,16 @@ export default function AdminAgenda() {
               <SelectContent>
                 <SelectItem value="all">Todos os profissionais</SelectItem>
                 {professionals.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  <SelectItem key={p.id} value={p.id}>
+                    <div className="flex items-center gap-2">
+                      <span>{p.name}</span>
+                      {p.specialty && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {p.specialty}
+                        </Badge>
+                      )}
+                    </div>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -601,13 +970,33 @@ export default function AdminAgenda() {
                                 {getStatusLabel(appointment.status)}
                               </Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
-                              <Scissors className="h-3 w-3" />
-                              {service?.name || 'Serviço'}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                            {(() => {
+                              const appointmentServiceIds = appointmentServicesMap[appointment.id] || [appointment.service_id];
+                              const appointmentServices = appointmentServiceIds
+                                .map(id => services.find(s => s.id === id))
+                                .filter(Boolean);
+                              const serviceNames = appointmentServices.map(s => s!.name);
+                              
+                              return (
+                                <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
+                                  <Scissors className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    {serviceNames.length === 1 
+                                      ? serviceNames[0]
+                                      : `${serviceNames.length} serviços: ${serviceNames.slice(0, 2).join(', ')}${serviceNames.length > 2 ? '...' : ''}`
+                                    }
+                                  </span>
+                                </p>
+                              );
+                            })()}
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                               <User className="h-3 w-3" />
-                              {professional?.name || 'Profissional'}
+                              <span>{professional?.name || 'Profissional'}</span>
+                              {professional?.specialty && (
+                                <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+                                  {professional.specialty}
+                                </Badge>
+                              )}
                               <span className="mx-1">•</span>
                               <Clock className="h-3 w-3" />
                               {appointment.start_time.substring(0, 5)} - {appointment.end_time.substring(0, 5)}
@@ -676,48 +1065,102 @@ export default function AdminAgenda() {
 
                 {/* Time Grid */}
                 <div className="relative">
-                  {timeSlots.map((time) => (
+                  {timeSlots.map((time, timeIndex) => (
                     <div key={time} className="grid grid-cols-8 border-b min-h-[60px]">
                       <div className="p-2 text-xs text-muted-foreground text-right pr-3">
                         {time}
                       </div>
                       {(viewMode === 'week' ? weekDays : [currentDate]).map((day) => {
-                        const dayAppointments = getAppointmentsForDay(day).filter(a => {
-                          // Normalizar o formato do horário (remover segundos se houver)
+                        const dayAppointments = getAppointmentsForDay(day);
+                        
+                        // Filtrar agendamentos que começam neste horário
+                        const appointmentsStartingHere = dayAppointments.filter(a => {
                           const aptTime = a.start_time.includes(':') 
                             ? a.start_time.split(':').slice(0, 2).join(':')
                             : a.start_time;
-                          
-                          // Comparar exatamente
                           return aptTime === time;
                         });
+                        
                         return (
                           <div
                             key={`${day.toISOString()}-${time}`}
                             className="border-l p-1 relative"
                           >
-                            {dayAppointments.map((apt) => {
+                            {appointmentsStartingHere.map((apt) => {
                               const client = clients.find(c => c.id === apt.client_id);
-                              const service = services.find(s => s.id === apt.service_id);
+                              
+                              // Calcular duração em minutos
+                              const [startHour, startMin] = apt.start_time.split(':').map(Number);
+                              const [endHour, endMin] = apt.end_time.split(':').map(Number);
+                              const startMinutes = startHour * 60 + startMin;
+                              const endMinutes = endHour * 60 + endMin;
+                              const durationMinutes = endMinutes - startMinutes;
+                              
+                              // Calcular quantos slots de 30min o agendamento ocupa
+                              const slotsOccupied = Math.max(1, Math.ceil(durationMinutes / 30));
+                              
+                              // Calcular altura: cada slot tem 60px (min-h-[60px])
+                              const height = slotsOccupied * 60 - 8; // -8 para padding
+                              
+                              // Ajustar padding baseado na altura
+                              const padding = height < 50 ? 'p-1' : 'p-2';
+                              const isShort = height < 50;
+                              
                               return (
                                 <div
                                   key={apt.id}
                                   className={cn(
-                                    'absolute inset-x-1 p-2 rounded-lg text-xs cursor-pointer transition-all hover:scale-[1.02] z-10',
-                                    'bg-primary-light border-l-4 border-primary'
+                                    'absolute left-1 right-1 rounded-lg text-xs cursor-pointer transition-all hover:shadow-lg z-10',
+                                    'bg-primary-light border-l-4 flex flex-col overflow-hidden',
+                                    padding,
+                                    apt.status === 'confirmed' && 'border-success',
+                                    apt.status === 'pending' && 'border-warning',
+                                    apt.status === 'completed' && 'border-info',
+                                    apt.status === 'cancelled' && 'border-destructive',
+                                    !apt.status && 'border-primary'
                                   )}
                                   style={{
-                                    top: '2px',
-                                    minHeight: '56px',
+                                    top: '4px',
+                                    height: `${height}px`,
+                                    minHeight: '40px',
                                   }}
                                   onClick={() => handleEdit(apt)}
                                 >
-                                  <div className="flex items-center gap-1 mb-1">
-                                    <div className={cn('h-2 w-2 rounded-full', getStatusColor(apt.status))} />
-                                    <span className="font-medium truncate">{client?.name || 'Cliente'}</span>
+                                  <div className="flex-1 min-h-0 flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <div className={cn('h-1.5 w-1.5 rounded-full shrink-0', getStatusColor(apt.status))} />
+                                      <span className={cn(
+                                        'font-semibold truncate',
+                                        isShort && 'text-[10px]'
+                                      )}>
+                                        {client?.name || 'Cliente'}
+                                      </span>
+                                    </div>
+                                    {(() => {
+                                      const appointmentServiceIds = appointmentServicesMap[apt.id] || [apt.service_id];
+                                      const appointmentServices = appointmentServiceIds
+                                        .map(id => services.find(s => s.id === id))
+                                        .filter(Boolean);
+                                      const serviceNames = appointmentServices.map(s => s!.name);
+                                      
+                                      return (
+                                        <p className={cn(
+                                          'text-muted-foreground truncate font-medium',
+                                          isShort ? 'text-[9px]' : 'text-[11px]'
+                                        )}>
+                                          {serviceNames.length === 1 
+                                            ? serviceNames[0]
+                                            : `${serviceNames.length} serviços`
+                                          }
+                                        </p>
+                                      );
+                                    })()}
                                   </div>
-                                  <p className="text-muted-foreground truncate">{service?.name || 'Serviço'}</p>
-                                  <p className="text-[10px] text-muted-foreground">{apt.start_time} - {apt.end_time}</p>
+                                  {!isShort && (
+                                    <p className="text-[10px] text-muted-foreground mt-auto pt-0.5">
+                                      {apt.start_time.substring(0, 5)} - {apt.end_time.substring(0, 5)}
+                                    </p>
+                                  )}
                                 </div>
                               );
                             })}
@@ -765,7 +1208,7 @@ export default function AdminAgenda() {
           setFormData({
             client_id: '',
             professional_id: '',
-            service_id: '',
+            service_ids: [],
             date: format(new Date(), 'yyyy-MM-dd'),
             start_time: '09:00',
             notes: '',
@@ -781,72 +1224,214 @@ export default function AdminAgenda() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Cliente *</Label>
-              <Select
-                value={formData.client_id}
-                onValueChange={(v) => setFormData({ ...formData, client_id: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map(c => (
-                    <SelectItem key={c.id} value={c.id}>
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4" />
-                        {c.name}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between">
+                <Label>Cliente *</Label>
+                {clients.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum cliente cadastrado</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Select
+                  value={formData.client_id}
+                  onValueChange={(v) => {
+                    if (v === 'new-client') {
+                      setIsClientModalOpen(true);
+                    } else {
+                      setFormData({ ...formData, client_id: v });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder={clients.length === 0 ? "Cadastre um cliente primeiro" : "Selecione o cliente"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.length === 0 ? (
+                      <SelectItem value="new-client" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <UserPlus className="h-4 w-4" />
+                          Cadastrar novo cliente
+                        </div>
+                      </SelectItem>
+                    ) : (
+                      <>
+                        {clients.map(c => (
+                          <SelectItem key={c.id} value={c.id}>
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4" />
+                              {c.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                        <div className="border-t my-1" />
+                        <SelectItem value="new-client" className="text-primary font-medium">
+                          <div className="flex items-center gap-2">
+                            <UserPlus className="h-4 w-4" />
+                            Cadastrar novo cliente
+                          </div>
+                        </SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Profissional *</Label>
+              <div className="flex items-center justify-between">
+                <Label>Profissional *</Label>
+                {professionals.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum profissional cadastrado</span>
+                )}
+              </div>
               <Select
                 value={formData.professional_id}
-                onValueChange={(v) => setFormData({ ...formData, professional_id: v })}
+                onValueChange={(v) => {
+                  if (v === 'new-professional') {
+                    setIsProfessionalModalOpen(true);
+                  } else {
+                    setFormData({ ...formData, professional_id: v });
+                  }
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o profissional" />
+                  <SelectValue placeholder={professionals.length === 0 ? "Cadastre um profissional primeiro" : "Selecione o profissional"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {professionals.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
+                  {professionals.length === 0 ? (
+                    <SelectItem value="new-professional" className="text-primary font-medium">
                       <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage src={p.avatar} />
-                          <AvatarFallback className="text-[10px]">{p.name.charAt(0)}</AvatarFallback>
-                        </Avatar>
-                        {p.name}
+                        <UserPlus className="h-4 w-4" />
+                        Cadastrar novo profissional
                       </div>
                     </SelectItem>
-                  ))}
+                  ) : (
+                    <>
+                      {professionals.map(p => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                              <AvatarImage src={p.avatar} />
+                              <AvatarFallback className="text-[10px]">{p.name.charAt(0)}</AvatarFallback>
+                            </Avatar>
+                            <span>{p.name}</span>
+                            {p.specialty && (
+                              <Badge variant="outline" className="text-[10px] ml-1">
+                                {p.specialty}
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                      <div className="border-t my-1" />
+                      <SelectItem value="new-professional" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <UserPlus className="h-4 w-4" />
+                          Cadastrar novo profissional
+                        </div>
+                      </SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
-              <Label>Serviço *</Label>
-              <Select
-                value={formData.service_id}
-                onValueChange={(v) => setFormData({ ...formData, service_id: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o serviço" />
-                </SelectTrigger>
-                <SelectContent>
-                  {services.map(s => (
-                    <SelectItem key={s.id} value={s.id}>
-                      <div className="flex items-center gap-2">
-                        <Scissors className="h-4 w-4" />
-                        {s.name} - R$ {s.price.toFixed(2)}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between">
+                <Label>Serviços *</Label>
+                {services.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum serviço cadastrado</span>
+                )}
+              </div>
+              {services.length === 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setIsServiceModalOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Cadastrar novo serviço
+                </Button>
+              ) : (
+                <div className="space-y-3">
+                  <ScrollArea className="h-[200px] border rounded-lg p-4">
+                    <div className="space-y-3">
+                      {services.map(s => {
+                        const isSelected = formData.service_ids.includes(s.id);
+                        return (
+                          <div
+                            key={s.id}
+                            className={cn(
+                              "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                              isSelected && "bg-primary-light/10 border-primary"
+                            )}
+                            onClick={() => {
+                              if (isSelected) {
+                                setFormData({
+                                  ...formData,
+                                  service_ids: formData.service_ids.filter(id => id !== s.id),
+                                });
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  service_ids: [...formData.service_ids, s.id],
+                                });
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setFormData({
+                                    ...formData,
+                                    service_ids: [...formData.service_ids, s.id],
+                                  });
+                                } else {
+                                  setFormData({
+                                    ...formData,
+                                    service_ids: formData.service_ids.filter(id => id !== s.id),
+                                  });
+                                }
+                              }}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <Scissors className="h-4 w-4 text-muted-foreground shrink-0" />
+                                <p className="font-medium">{s.name}</p>
+                              </div>
+                              <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {s.duration} min
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <DollarSign className="h-3 w-3" />
+                                  R$ {s.price.toFixed(2)}
+                                </span>
+                                {s.category && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {s.category}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setIsServiceModalOpen(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Cadastrar novo serviço
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -885,6 +1470,41 @@ export default function AdminAgenda() {
                 rows={3}
               />
             </div>
+
+            {/* Card de informações dos serviços selecionados */}
+            {formData.service_ids.length > 0 && (
+              <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Serviços selecionados:</span>
+                  <span className="font-semibold">{formData.service_ids.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Duração total:</span>
+                  <span className="font-semibold flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {selectedServicesInfo.totalDuration} min
+                    {selectedServicesInfo.totalDuration >= 60 && (
+                      <span className="text-muted-foreground font-normal">
+                        ({Math.floor(selectedServicesInfo.totalDuration / 60)}h {selectedServicesInfo.totalDuration % 60}min)
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Preço total:</span>
+                  <span className="font-semibold text-success flex items-center gap-1">
+                    <DollarSign className="h-3 w-3" />
+                    R$ {selectedServicesInfo.totalPrice.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm pt-2 border-t">
+                  <span className="text-muted-foreground">Horário de término:</span>
+                  <span className="font-semibold">
+                    {formData.start_time.substring(0, 5)} - {selectedServicesInfo.end_time.substring(0, 5)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
           {editingAppointment && (
             <div className="mt-4 pt-4 border-t space-y-3">
@@ -974,11 +1594,12 @@ export default function AdminAgenda() {
             {editingAppointment && (
               <Button
                 variant="outline"
-                onClick={handleDelete}
+                onClick={() => setDeleteDialogOpen(true)}
                 disabled={deleteMutation.isPending}
+                className="text-destructive hover:text-destructive"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                {deleteMutation.isPending ? 'Removendo...' : 'Remover'}
+                Remover
               </Button>
             )}
             <Button
@@ -987,7 +1608,7 @@ export default function AdminAgenda() {
               disabled={
                 !formData.client_id ||
                 !formData.professional_id ||
-                !formData.service_id ||
+                formData.service_ids.length === 0 ||
                 createMutation.isPending ||
                 updateMutation.isPending
               }
@@ -996,6 +1617,294 @@ export default function AdminAgenda() {
                 ? (updateMutation.isPending ? 'Salvando...' : 'Salvar')
                 : (createMutation.isPending ? 'Criando...' : 'Criar')
               }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja remover este agendamento? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                handleDelete();
+                setDeleteDialogOpen(false);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal de Cadastro Rápido de Cliente */}
+      <Dialog open={isClientModalOpen} onOpenChange={setIsClientModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-primary" />
+              Cadastrar Novo Cliente
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do cliente para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Nome completo"
+                  className="pl-10"
+                  value={newClientData.name}
+                  onChange={(e) => setNewClientData({ ...newClientData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Email *</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="email"
+                  placeholder="email@exemplo.com"
+                  className="pl-10"
+                  value={newClientData.email}
+                  onChange={(e) => setNewClientData({ ...newClientData, email: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="tel"
+                  placeholder="(11) 99999-9999"
+                  className="pl-10"
+                  value={newClientData.phone}
+                  onChange={(e) => setNewClientData({ ...newClientData, phone: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsClientModalOpen(false);
+                setNewClientData({ name: '', email: '', phone: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newClientData.name || !newClientData.email) {
+                  toast({
+                    title: 'Campos obrigatórios',
+                    description: 'Nome e email são obrigatórios.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createClientMutation.mutate(newClientData);
+              }}
+              disabled={createClientMutation.isPending || !newClientData.name || !newClientData.email}
+            >
+              {createClientMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Cadastro Rápido de Profissional */}
+      <Dialog open={isProfessionalModalOpen} onOpenChange={setIsProfessionalModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Briefcase className="h-5 w-5 text-primary" />
+              Cadastrar Novo Profissional
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do profissional para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Nome completo"
+                  className="pl-10"
+                  value={newProfessionalData.name}
+                  onChange={(e) => setNewProfessionalData({ ...newProfessionalData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Especialidade</Label>
+              <div className="relative">
+                <Scissors className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Cabeleireira, Manicure, Esteticista..."
+                  className="pl-10"
+                  value={newProfessionalData.specialty}
+                  onChange={(e) => setNewProfessionalData({ ...newProfessionalData, specialty: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsProfessionalModalOpen(false);
+                setNewProfessionalData({ name: '', specialty: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newProfessionalData.name) {
+                  toast({
+                    title: 'Campo obrigatório',
+                    description: 'Nome é obrigatório.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createProfessionalMutation.mutate(newProfessionalData);
+              }}
+              disabled={createProfessionalMutation.isPending || !newProfessionalData.name}
+            >
+              {createProfessionalMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Cadastro Rápido de Serviço */}
+      <Dialog open={isServiceModalOpen} onOpenChange={setIsServiceModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scissors className="h-5 w-5 text-primary" />
+              Cadastrar Novo Serviço
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do serviço para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <Scissors className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Corte de Cabelo, Manicure..."
+                  className="pl-10"
+                  value={newServiceData.name}
+                  onChange={(e) => setNewServiceData({ ...newServiceData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Duração (min) *</Label>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    placeholder="60"
+                    className="pl-10"
+                    min="15"
+                    step="15"
+                    value={newServiceData.duration}
+                    onChange={(e) => setNewServiceData({ ...newServiceData, duration: parseInt(e.target.value) || 60 })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Preço (R$) *</Label>
+                <div className="relative">
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    className="pl-10"
+                    min="0"
+                    step="0.01"
+                    value={newServiceData.price}
+                    onChange={(e) => setNewServiceData({ ...newServiceData, price: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              <div className="relative">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Cabelo, Unhas, Estética..."
+                  className="pl-10"
+                  value={newServiceData.category}
+                  onChange={(e) => setNewServiceData({ ...newServiceData, category: e.target.value })}
+                  list="categories"
+                />
+                {serviceCategories.length > 0 && (
+                  <datalist id="categories">
+                    {serviceCategories.map(cat => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsServiceModalOpen(false);
+                setNewServiceData({ name: '', duration: 60, price: 0, category: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newServiceData.name || !newServiceData.duration || !newServiceData.price) {
+                  toast({
+                    title: 'Campos obrigatórios',
+                    description: 'Nome, duração e preço são obrigatórios.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createServiceMutation.mutate(newServiceData);
+              }}
+              disabled={createServiceMutation.isPending || !newServiceData.name || !newServiceData.duration || !newServiceData.price}
+            >
+              {createServiceMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
             </Button>
           </DialogFooter>
         </DialogContent>

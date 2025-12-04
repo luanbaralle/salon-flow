@@ -17,3 +17,5 @@ WHERE availability IS NULL
    OR availability = '{}'::jsonb
    OR jsonb_typeof(availability) = 'null';
 
+
+
