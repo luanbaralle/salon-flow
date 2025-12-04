@@ -39,7 +39,7 @@ import { professionalsService } from '@/services/professionals.service';
 import { servicesService } from '@/services/services.service';
 import { clientsService } from '@/services/clients.service';
 import { reviewsService } from '@/services/reviews.service';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid, UserPlus, Mail, Phone } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Clock, User, Scissors, Edit, Trash2, Check, Star, Copy, CheckCircle, List, Grid, UserPlus, Mail, Phone, Briefcase, DollarSign, Tag } from 'lucide-react';
 import { format, addDays, startOfWeek, addWeeks, subWeeks, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -72,10 +72,22 @@ export default function AdminAgenda() {
   const [showListView, setShowListView] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isProfessionalModalOpen, setIsProfessionalModalOpen] = useState(false);
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
   const [newClientData, setNewClientData] = useState({
     name: '',
     email: '',
     phone: '',
+  });
+  const [newProfessionalData, setNewProfessionalData] = useState({
+    name: '',
+    specialty: '',
+  });
+  const [newServiceData, setNewServiceData] = useState({
+    name: '',
+    duration: 60,
+    price: 0,
+    category: '',
   });
   const [formData, setFormData] = useState({
     client_id: '',
@@ -108,18 +120,23 @@ export default function AdminAgenda() {
   }, [viewMode, weekStart, currentDate]);
 
   // Buscar profissionais
-  const { data: professionals = [] } = useQuery({
+  const { data: professionals = [], refetch: refetchProfessionals } = useQuery({
     queryKey: ['professionals', tenant?.id],
     queryFn: () => professionalsService.getAll(tenant!.id),
     enabled: !!tenant?.id,
   });
 
   // Buscar serviços
-  const { data: services = [] } = useQuery({
+  const { data: services = [], refetch: refetchServices } = useQuery({
     queryKey: ['services', tenant?.id],
     queryFn: () => servicesService.getAll(tenant!.id),
     enabled: !!tenant?.id,
   });
+
+  // Obter categorias únicas dos serviços existentes
+  const serviceCategories = useMemo(() => {
+    return [...new Set(services.map(s => s.category))];
+  }, [services]);
 
   // Buscar clientes
   const { data: clients = [], refetch: refetchClients } = useQuery({
@@ -150,6 +167,61 @@ export default function AdminAgenda() {
       toast({
         title: 'Erro ao cadastrar cliente',
         description: error.message || 'Ocorreu um erro ao cadastrar o cliente.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Criar profissional rapidamente
+  const createProfessionalMutation = useMutation({
+    mutationFn: (data: typeof newProfessionalData) =>
+      professionalsService.create(tenant!.id, {
+        name: data.name,
+        specialty: data.specialty || undefined,
+        commission: 40,
+      }),
+    onSuccess: async (newProfessional) => {
+      await refetchProfessionals();
+      setFormData({ ...formData, professional_id: newProfessional.id });
+      setIsProfessionalModalOpen(false);
+      setNewProfessionalData({ name: '', specialty: '' });
+      toast({
+        title: 'Profissional cadastrado!',
+        description: `${newProfessional.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar profissional',
+        description: error.message || 'Ocorreu um erro ao cadastrar o profissional.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Criar serviço rapidamente
+  const createServiceMutation = useMutation({
+    mutationFn: (data: typeof newServiceData) =>
+      servicesService.create(tenant!.id, {
+        name: data.name,
+        duration: data.duration,
+        price: data.price,
+        category: data.category || 'Geral',
+      }),
+    onSuccess: async (newService) => {
+      await refetchServices();
+      setFormData({ ...formData, service_id: newService.id });
+      setIsServiceModalOpen(false);
+      setNewServiceData({ name: '', duration: 60, price: 0, category: '' });
+      toast({
+        title: 'Serviço cadastrado!',
+        description: `${newService.name} foi adicionado e selecionado automaticamente.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cadastrar serviço',
+        description: error.message || 'Ocorreu um erro ao cadastrar o serviço.',
         variant: 'destructive',
       });
     },
@@ -883,48 +955,106 @@ export default function AdminAgenda() {
             </div>
 
             <div className="space-y-2">
-              <Label>Profissional *</Label>
+              <div className="flex items-center justify-between">
+                <Label>Profissional *</Label>
+                {professionals.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum profissional cadastrado</span>
+                )}
+              </div>
               <Select
                 value={formData.professional_id}
-                onValueChange={(v) => setFormData({ ...formData, professional_id: v })}
+                onValueChange={(v) => {
+                  if (v === 'new-professional') {
+                    setIsProfessionalModalOpen(true);
+                  } else {
+                    setFormData({ ...formData, professional_id: v });
+                  }
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o profissional" />
+                  <SelectValue placeholder={professionals.length === 0 ? "Cadastre um profissional primeiro" : "Selecione o profissional"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {professionals.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
+                  {professionals.length === 0 ? (
+                    <SelectItem value="new-professional" className="text-primary font-medium">
                       <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage src={p.avatar} />
-                          <AvatarFallback className="text-[10px]">{p.name.charAt(0)}</AvatarFallback>
-                        </Avatar>
-                        {p.name}
+                        <UserPlus className="h-4 w-4" />
+                        Cadastrar novo profissional
                       </div>
                     </SelectItem>
-                  ))}
+                  ) : (
+                    <>
+                      {professionals.map(p => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                              <AvatarImage src={p.avatar} />
+                              <AvatarFallback className="text-[10px]">{p.name.charAt(0)}</AvatarFallback>
+                            </Avatar>
+                            {p.name}
+                          </div>
+                        </SelectItem>
+                      ))}
+                      <div className="border-t my-1" />
+                      <SelectItem value="new-professional" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <UserPlus className="h-4 w-4" />
+                          Cadastrar novo profissional
+                        </div>
+                      </SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
-              <Label>Serviço *</Label>
+              <div className="flex items-center justify-between">
+                <Label>Serviço *</Label>
+                {services.length === 0 && (
+                  <span className="text-xs text-muted-foreground">Nenhum serviço cadastrado</span>
+                )}
+              </div>
               <Select
                 value={formData.service_id}
-                onValueChange={(v) => setFormData({ ...formData, service_id: v })}
+                onValueChange={(v) => {
+                  if (v === 'new-service') {
+                    setIsServiceModalOpen(true);
+                  } else {
+                    setFormData({ ...formData, service_id: v });
+                  }
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o serviço" />
+                  <SelectValue placeholder={services.length === 0 ? "Cadastre um serviço primeiro" : "Selecione o serviço"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {services.map(s => (
-                    <SelectItem key={s.id} value={s.id}>
+                  {services.length === 0 ? (
+                    <SelectItem value="new-service" className="text-primary font-medium">
                       <div className="flex items-center gap-2">
-                        <Scissors className="h-4 w-4" />
-                        {s.name} - R$ {s.price.toFixed(2)}
+                        <Plus className="h-4 w-4" />
+                        Cadastrar novo serviço
                       </div>
                     </SelectItem>
-                  ))}
+                  ) : (
+                    <>
+                      {services.map(s => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <div className="flex items-center gap-2">
+                            <Scissors className="h-4 w-4" />
+                            {s.name} - R$ {s.price.toFixed(2)}
+                          </div>
+                        </SelectItem>
+                      ))}
+                      <div className="border-t my-1" />
+                      <SelectItem value="new-service" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <Plus className="h-4 w-4" />
+                          Cadastrar novo serviço
+                        </div>
+                      </SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -1185,6 +1315,186 @@ export default function AdminAgenda() {
               disabled={createClientMutation.isPending || !newClientData.name || !newClientData.email}
             >
               {createClientMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Cadastro Rápido de Profissional */}
+      <Dialog open={isProfessionalModalOpen} onOpenChange={setIsProfessionalModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Briefcase className="h-5 w-5 text-primary" />
+              Cadastrar Novo Profissional
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do profissional para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Nome completo"
+                  className="pl-10"
+                  value={newProfessionalData.name}
+                  onChange={(e) => setNewProfessionalData({ ...newProfessionalData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Especialidade</Label>
+              <div className="relative">
+                <Scissors className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Cabeleireira, Manicure, Esteticista..."
+                  className="pl-10"
+                  value={newProfessionalData.specialty}
+                  onChange={(e) => setNewProfessionalData({ ...newProfessionalData, specialty: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsProfessionalModalOpen(false);
+                setNewProfessionalData({ name: '', specialty: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newProfessionalData.name) {
+                  toast({
+                    title: 'Campo obrigatório',
+                    description: 'Nome é obrigatório.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createProfessionalMutation.mutate(newProfessionalData);
+              }}
+              disabled={createProfessionalMutation.isPending || !newProfessionalData.name}
+            >
+              {createProfessionalMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Cadastro Rápido de Serviço */}
+      <Dialog open={isServiceModalOpen} onOpenChange={setIsServiceModalOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scissors className="h-5 w-5 text-primary" />
+              Cadastrar Novo Serviço
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados básicos do serviço para continuar com o agendamento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <div className="relative">
+                <Scissors className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Corte de Cabelo, Manicure..."
+                  className="pl-10"
+                  value={newServiceData.name}
+                  onChange={(e) => setNewServiceData({ ...newServiceData, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Duração (min) *</Label>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    placeholder="60"
+                    className="pl-10"
+                    min="15"
+                    step="15"
+                    value={newServiceData.duration}
+                    onChange={(e) => setNewServiceData({ ...newServiceData, duration: parseInt(e.target.value) || 60 })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Preço (R$) *</Label>
+                <div className="relative">
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    className="pl-10"
+                    min="0"
+                    step="0.01"
+                    value={newServiceData.price}
+                    onChange={(e) => setNewServiceData({ ...newServiceData, price: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              <div className="relative">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Ex: Cabelo, Unhas, Estética..."
+                  className="pl-10"
+                  value={newServiceData.category}
+                  onChange={(e) => setNewServiceData({ ...newServiceData, category: e.target.value })}
+                  list="categories"
+                />
+                {serviceCategories.length > 0 && (
+                  <datalist id="categories">
+                    {serviceCategories.map(cat => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsServiceModalOpen(false);
+                setNewServiceData({ name: '', duration: 60, price: 0, category: '' });
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => {
+                if (!newServiceData.name || !newServiceData.duration || !newServiceData.price) {
+                  toast({
+                    title: 'Campos obrigatórios',
+                    description: 'Nome, duração e preço são obrigatórios.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                createServiceMutation.mutate(newServiceData);
+              }}
+              disabled={createServiceMutation.isPending || !newServiceData.name || !newServiceData.duration || !newServiceData.price}
+            >
+              {createServiceMutation.isPending ? 'Cadastrando...' : 'Cadastrar e Continuar'}
             </Button>
           </DialogFooter>
         </DialogContent>
